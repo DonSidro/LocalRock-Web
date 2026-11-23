@@ -4,7 +4,7 @@ import {
   describeError, describeState, isCustomizeModeSet, isSmartModeSet, isVacuumThenMopRepeatSupported, isVacuumThenMopSupported, mapNameBlocker, mapSavingEnabled, multiLevelEnabled, normalizeWaterMode, roomCleanModesFor,
   type RoomCleanMode,
 } from '../../../shared/codes';
-import type { FloorMap, VacuumSnapshot } from '../../../shared/api';
+import type { FloorMap, LastKnown, VacuumSnapshot } from '../../../shared/api';
 import { roomAtNorm, type MapRoom, type ParsedMap } from '../../../shared/map';
 import { Icon, type IconName } from '../icons';
 import { MapView } from '../map/MapView';
@@ -289,6 +289,7 @@ function Overview({ duid, snap, map, tool, run, read, busy, selected, setSelecte
           <button type="button" className="btn secondary sm" onClick={onMaps}><Icon name="layers" />Maps</button>
           <Link to={vacRoute(duid, 'edit')} className="btn secondary sm"><Icon name="edit" />Edit map</Link>
         </div>
+        {snap.lastKnown && <LastKnownBanner k={snap.lastKnown} offlineMap={snap.offlineMap} />}
         <div className="map-stage">
           {map ? (
             <MapView
@@ -478,6 +479,35 @@ function StatusPanel({ snap, lastArea, duid }: { snap: VacuumSnapshot; lastArea:
       </div>
       <p className="muted tiny">Map: {snap.mapStatus}</p>
     </Panel>
+  );
+}
+
+/** "8:34 PM" today, "Oct 21, 8:34 PM" another day; null when the time is missing or unreadable. */
+function lastKnownTime(iso: string | null): string | null {
+  if (!iso) return null;
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return null;
+  const today = new Date().toDateString() === at.toDateString();
+  return at.toLocaleString(undefined, today ? { hour: 'numeric', minute: '2-digit' } : { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+/** Shown over the map while the robot does not answer: when it went quiet, and what it last said. */
+function LastKnownBanner({ k, offlineMap }: { k: LastKnown; offlineMap: boolean }) {
+  const since = lastKnownTime(k.offlineAt);
+  const seen = lastKnownTime(k.lastSeenAt);
+  const details = [
+    k.battery !== null ? `Battery ${k.battery}%` : null,
+    k.errorCode !== null && k.errorCode !== 0 ? describeError(k.errorCode) : k.state !== null ? describeState(k.state) : null,
+  ].filter(Boolean);
+  return (
+    <div className="callout error" role="status">
+      <Icon name="error" />
+      <span className="col tight" style={{ gap: 2 }}>
+        <strong>{since ? `Offline since ${since}` : seen ? `Last heard from ${seen}` : 'Not answering'}</strong>
+        {details.length > 0 && <span className="small">Last reported: {details.join(', ')}</span>}
+        {offlineMap && <span className="small">{k.robotMm ? 'Showing the last map and where it was last seen.' : 'Showing the last map the robot sent.'}</span>}
+      </span>
+    </div>
   );
 }
 

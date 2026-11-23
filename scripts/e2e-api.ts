@@ -86,6 +86,8 @@ async function main() {
   const online = await until('reachability', () => devicesMsg?.devices.filter((d) => d.reachability === 'ONLINE').length === 2 && devicesMsg);
   check(!!online, 'both robots probed ONLINE');
   check(devicesMsg!.devices.some((d) => d.duid === 'SimUnpaired03' && !d.paired), 'unpaired robot listed as not paired');
+  check((await until('never heard', () => devicesMsg?.devices.find((d) => d.duid === 'SimUnpaired03')?.unpaired)) === true
+    && devicesMsg!.devices.filter((d) => d.unpaired).length === 1, 'a robot the server never heard from shows as not paired yet');
 
   ws.send(JSON.stringify({ t: 'watch', duid: S8 }));
   const map = await until('map', () => maps.get(S8));

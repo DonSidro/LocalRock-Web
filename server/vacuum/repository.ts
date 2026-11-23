@@ -70,6 +70,8 @@ export interface RepositoryDeps {
   rriotKey: () => string;
   cleanOrder: (mapFlag: number) => number[];
 }
+/** How long a robot may stay silent after it is opened before the server's last-known state is fetched. */
+const LAST_KNOWN_AFTER_MS = 10_000;
 
 /** Turns status snapshots into alerts; edge-triggered, so whatever is wrong when watching starts is not announced. */
 class EventDetector {
@@ -151,6 +153,18 @@ export class VacuumRepository extends EventEmitter {
   alertsWanted = false;
 
   private watchers = 0;
+  /** Status polls in a row without an answer; any reply or push starts over. */
+  private missedPolls = 0;
+  private unresponsive = false;
+  private lastKnown: LastKnown | null = null;
+  /** The last map the server kept, drawn while the robot can't be asked for a live one. */
+  private offlineMap: ParsedMap | null = null;
+  private lastKnownTimer: NodeJS.Timeout | null = null;
+  private firmwareCheck: FirmwareCheck | null = null;
+  private firmwareProgress: FirmwareProgress = { kind: 'idle' };
+  private firmwareWatching = false;
+  private voice: VoiceSnapshot = { switchKey: null, enabled: null, languageCode: null, historyCount: null, currentSid: null, location: null };
+  private voiceInstall: VoiceInstallState | null = null;
   private statusLoop: AbortController | null = null;
   private mapLoop: AbortController | null = null;
   private floorLoop: AbortController | null = null;
@@ -172,6 +186,11 @@ export class VacuumRepository extends EventEmitter {
   addWatcher(): void {
     this.watchers++;
     if (this.watchers === 1) {
+      // A robot that never answers (dead battery, lost Wi-Fi) leaves the page empty; the server
+      // still holds where it was last seen and what it last reported.
+      this.lastKnownTimer = setTimeout(() => {
+        if (this.status.state === undefined && this.status.battery === undefined) void this.loadLastKnown();
+      }, LAST_KNOWN_AFTER_MS);
       this.ensureStatusLoop();
       this.startMapLoop();
       this.startFloorLoop();
@@ -183,6 +202,8 @@ export class VacuumRepository extends EventEmitter {
     if (this.watchers === 0) return;
     this.watchers--;
     if (this.watchers === 0) {
+      if (this.lastKnownTimer) clearTimeout(this.lastKnownTimer);
+      this.lastKnownTimer = null;
       this.mapLoop?.abort();
       this.mapLoop = null;
       this.floorLoop?.abort();
@@ -212,7 +233,7 @@ export class VacuumRepository extends EventEmitter {
   private startSession(): void {
     if (!this.deps.session.started) this.deps.session.start();
     if (!this.removePush) {
-      this.removePush = this.deps.session.onPush((push) => this.applyStatus(applyDpsPush(this.status, push)));
+      this.removePush = this.deps.session.onPush((push) => { this.heardFromRobot(); this.applyStatus(applyDpsPush(this.status, push)); });
     }
   }
 
@@ -259,6 +280,7 @@ export class VacuumRepository extends EventEmitter {
           this.deps.session.ensureSubscribed();
           const fresh = await this.getStatus();
           failures = 0;
+          this.heardFromRobot();
           if (fresh) this.applyStatus(mergeStatus(this.status, fresh));
           if (!this.robotFlagsAsked) {
             this.robotFlagsAsked = true;
@@ -268,6 +290,10 @@ export class VacuumRepository extends EventEmitter {
           if (e instanceof Aborted) throw e;
           failures++;
           log.debug(`${this.info.name}: get_status failed (#${failures}): ${describeException(e)}`);
+          if (++this.missedPolls >= STALE_LINK_FAILURE_THRESHOLD && !this.unresponsive) {
+            this.unresponsive = true;
+            void this.loadLastKnown();
+          }
           if (failures >= STALE_LINK_FAILURE_THRESHOLD) {
             // A timed-out request is not proof of a dead socket; only reconnect when the link is
             // down or has gone completely silent.
@@ -401,8 +427,9 @@ export class VacuumRepository extends EventEmitter {
     };
   }
 
+  /** The live map, or the server's last one while the robot doesn't answer. */
   map(): ParsedMap | null {
-    return this.parsedMap;
+    return this.parsedMap ?? this.offlineMap;
   }
 
   private applyStatus(next: VacuumStatus): void {
@@ -425,6 +452,54 @@ export class VacuumRepository extends EventEmitter {
       alert = { ...base, body: parts.length ? `Cleaning finished: ${parts.join(' in ')}` : 'Cleaning finished', alert: false };
     }
     this.emit('alert', alert);
+  }
+
+  // ---- Last known (local_roborock_server #251) ------------------------------------------------
+
+  private heardFromRobot(): void {
+    this.missedPolls = 0;
+    if (!this.unresponsive && !this.lastKnown && !this.offlineMap) return;
+    this.unresponsive = false;
+    this.lastKnown = null;
+    if (this.offlineMap) {
+      this.offlineMap = null;
+      this.emit('map', this.parsedMap, this.mapVersion);
+    }
+    this.changed();
+  }
+
+  private answering(): boolean {
+    return (this.status.state !== undefined || this.status.battery !== undefined) && !this.unresponsive;
+  }
+
+  async loadLastKnown(): Promise<void> {
+    const k = await this.deps.lastKnown?.(true);
+    if (!k || this.answering()) return;
+    const s = k.status ?? {};
+    const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+    const robot = k.position?.robot;
+    this.lastKnown = {
+      lastSeenAt: k.last_seen_at ?? null,
+      offlineAt: k.offline_at ?? null,
+      state: num(s.state),
+      battery: num(s.battery),
+      errorCode: num(s.error_code),
+      robotMm: robot && num(robot.x) !== null && num(robot.y) !== null ? { x: robot.x!, y: robot.y! } : null,
+    };
+    if (!this.parsedMap && k.map) {
+      try {
+        const parsed = parseAnyMap(Buffer.from(k.map, 'base64')).map;
+        if (parsed) {
+          // Room names from the server's copy of the robot's room table.
+          const names = new Map((k.rooms ?? []).filter((r) => typeof r.segment === 'number' && r.name).map((r) => [r.segment!, r.name!]));
+          this.offlineMap = names.size ? { ...parsed, rooms: parsed.rooms.map((r) => ({ ...r, name: names.get(r.id) ?? r.name })) } : parsed;
+          this.emit('map', this.offlineMap, this.mapVersion);
+        }
+      } catch {
+        // No map to show; the text still says when it was seen.
+      }
+    }
+    this.changed();
   }
 
   // ---- Status -------------------------------------------------------------------------------

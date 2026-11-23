@@ -13,7 +13,7 @@ export type MapTool = 'rooms' | 'zones' | 'pin';
 export type Route =
   | { name: 'devices' }
   | { name: 'settings' }
-  | { name: 'add' }
+  | { name: 'add'; duid?: string }
   | { name: 'vacuum'; duid: string; tab: VacTab; tool?: Exclude<MapTool, 'rooms'> };
 
 const TABS: VacTab[] = ['edit', 'schedule', 'history', 'maintenance', 'settings', 'camera', 'remote'];
@@ -21,7 +21,7 @@ const TABS: VacTab[] = ['edit', 'schedule', 'history', 'maintenance', 'settings'
 export function parseRoute(hash: string): Route {
   const parts = hash.replace(/^#\/?/, '').split('/').filter(Boolean).map(decodeURIComponent);
   if (parts[0] === 'settings') return { name: 'settings' };
-  if (parts[0] === 'add') return { name: 'add' };
+  if (parts[0] === 'add') return parts[1] ? { name: 'add', duid: parts[1] } : { name: 'add' };
   if (parts[0] === 'vac' && parts[1]) {
     const duid = parts[1];
     const sub = parts[2];
@@ -38,7 +38,7 @@ export function href(route: Route): string {
   switch (route.name) {
     case 'devices': return '#/';
     case 'settings': return '#/settings';
-    case 'add': return '#/add';
+    case 'add': return route.duid ? `#/add/${encodeURIComponent(route.duid)}` : '#/add';
     case 'vacuum': {
       const base = `#/vac/${encodeURIComponent(route.duid)}`;
       if (route.tab === 'overview') return route.tool ? `${base}/${route.tool}` : base;
@@ -79,6 +79,7 @@ export function useRoute(): Route {
   );
   return parseRoute(hash);
 }
+
 /**
  * Which robot to open on launch, like the app: one paired robot opens at once; with several, the last
  * one opened (remembered in this browser); otherwise the list.

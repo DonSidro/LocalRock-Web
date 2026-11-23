@@ -149,6 +149,8 @@ export interface DeviceSummary {
   name: string;
   model: string | null;
   paired: boolean;
+  /** The server has never heard from this robot (and a probe did not find it): it still needs Add vacuum. */
+  unpaired: boolean;
   /** The robot's own answer when it was asked, else the server's flag. */
   online: boolean;
   reachability: Reachability | null;
@@ -188,6 +190,18 @@ export type ServerMessage =
 
 /** Browser -> server over the WebSocket. */
 export type ClientMessage = { t: 'watch'; duid: string } | { t: 'unwatch'; duid: string };
+
+/** What the server last heard from a robot that has stopped answering. */
+export interface LastKnown {
+  /** ISO times from the server. */
+  lastSeenAt: string | null;
+  offlineAt: string | null;
+  state: number | null;
+  battery: number | null;
+  errorCode: number | null;
+  /** Where it was last seen, robot mm. */
+  robotMm: { x: number; y: number } | null;
+}
 
 /** A routine ("scene") saved with the official app; the server runs its steps, so only the name is shown. */
 export interface Routine {

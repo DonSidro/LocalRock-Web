@@ -149,6 +149,19 @@ function parseJson(raw: RawResponse, what: string): Record<string, unknown> {
   throw new ApiError(raw.status, `${what}: the server did not return JSON (HTTP ${raw.status})`);
 }
 
+/** GET /user/devices/{duid}/last_known, as the server answers it. */
+export interface LastKnownRaw {
+  known?: boolean;
+  last_seen_at?: string | null;
+  offline_at?: string | null;
+  status?: { state?: number | null; battery?: number | null; error_code?: number | null } | null;
+  position?: { robot?: { x?: number; y?: number } | null; charger?: { x?: number; y?: number } | null } | null;
+  has_map?: boolean;
+  /** Base64 of the last map the robot sent, in the same form a live map reply decodes to. */
+  map?: string | null;
+  rooms?: Array<{ segment?: number; iot_id?: string; tag?: number | null; name?: string | null }>;
+}
+
 export interface SceneRunResult {
   accepted: boolean;
   status: string | null;
@@ -258,6 +271,15 @@ export class ServerApi {
     const r = (json['result'] ?? json['data']) as Record<string, unknown> | undefined;
     const text = (k: string) => (r && typeof r[k] === 'string' ? r[k] as string : null);
     return { accepted: r?.['accepted'] !== false, status: text('status'), activeSceneName: text('activeSceneName') };
+  }
+
+  /**
+   * What the server last heard from a robot (local_roborock_server #251), with its last map when
+   * includeMap. A server without it answers an error, which callers treat as "nothing known".
+   */
+  async lastKnown(duid: string, includeMap: boolean): Promise<LastKnownRaw> {
+    const raw = await this.call('GET', `/user/devices/${encodeURIComponent(duid)}/last_known`, { query: includeMap ? { map: '1' } : {} });
+    return apiData<LastKnownRaw>(raw, 'Last known state') ?? { known: false };
   }
 
   async createRoom(homeId: number, name: string): Promise<Room> {

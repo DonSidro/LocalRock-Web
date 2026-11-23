@@ -63,6 +63,21 @@ function RobotCard({ device }: { device: DeviceSummary }) {
   const { run, busy } = useRobotActions(device.duid);
   const to = vacRoute(device.duid);
 
+  if (device.unpaired) {
+    return (
+      <article className="robot-card">
+        <Link to={{ name: 'add', duid: device.duid }} className="robot-card-map" title={`Pair ${device.name}`}><Icon name="robot" size={40} className="muted" /></Link>
+        <div className="robot-card-body">
+          <h3 className="ellipsis">{device.name}</h3>
+          {device.model && <span className="muted small">{device.model}</span>}
+          <span className="row small" style={{ color: 'var(--error)' }}><span className="dot" style={{ background: 'var(--error)' }} />Not paired yet</span>
+          <p className="muted small">Your server has never heard from this robot. Pair it with Add vacuum to control it here.</p>
+          <Link to={{ name: 'add', duid: device.duid }} className="btn secondary sm">Add vacuum</Link>
+        </div>
+      </article>
+    );
+  }
+
   if (!device.paired) {
     return (
       <article className="robot-card disabled">

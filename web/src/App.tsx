@@ -160,8 +160,8 @@ function Sidebar({ route, onSignOut }: { route: Route; onSignOut: () => void }) 
 
 function RobotNavItem({ device, current }: { device: DeviceSummary; current: boolean }) {
   const snap = useStore((s) => s.vacs[device.duid]);
-  const offlineText = !device.paired ? 'Setup incomplete' : device.reachability === 'CHECKING' ? 'Checking...' : device.online ? 'Online' : 'Offline';
-  const dot = !device.paired ? 'var(--error)' : device.online ? 'var(--good)' : 'var(--outline)';
+  const offlineText = device.unpaired ? 'Not paired yet' : !device.paired ? 'Setup incomplete' : device.reachability === 'CHECKING' ? 'Checking...' : device.online ? 'Online' : 'Offline';
+  const dot = device.unpaired || !device.paired ? 'var(--error)' : device.online ? 'var(--good)' : 'var(--outline)';
   const line = snap && device.online ? statusLine(snap) : null;
   const battery = snap?.status.battery;
   const inner = (
@@ -174,6 +174,8 @@ function RobotNavItem({ device, current }: { device: DeviceSummary; current: boo
       {battery !== undefined && device.online && <span className="tiny strong" style={{ color: batteryColor(battery) }}>{battery}%</span>}
     </>
   );
+  // A robot the server has never heard from opens Add vacuum with it chosen.
+  if (device.unpaired) return <Link to={{ name: 'add', duid: device.duid }} className="nav-item robot" current={false}>{inner}</Link>;
   if (!device.paired) return <div className="nav-item robot disabled" title="This robot has no local key yet. Re-run pairing on your server to control it.">{inner}</div>;
   return <Link to={vacRoute(device.duid)} className="nav-item robot" current={current}>{inner}</Link>;
 }

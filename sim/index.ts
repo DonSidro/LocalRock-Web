@@ -166,6 +166,20 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse): Promise<vo
     return json(res, 200, { code: 200, msg: 'success', data: room });
   }
 
+  // What the server last heard from a robot (local_roborock_server #251); it has never heard from the unpaired one.
+  const lastKnown = path.match(/^\/user\/devices\/([^/]+)\/last_known$/);
+  if (req.method === 'GET' && lastKnown) {
+    if (!hawkOk(req, path, query, null)) return json(res, 401, { code: 401, msg: 'hawk check failed', data: null });
+    const robot = robots.find((r) => r.config.duid === decodeURIComponent(lastKnown[1]!));
+    if (!robot) return json(res, 200, { code: 200, msg: 'success', data: { duid: lastKnown[1], known: false } });
+    const st = robot.status;
+    return json(res, 200, { code: 200, msg: 'success', data: {
+      duid: robot.config.duid, known: true, last_seen_at: new Date().toISOString(), offline_at: null,
+      status: { state: st['state'], battery: st['battery'], error_code: st['error_code'], updated_at: new Date().toISOString() },
+      position: null, has_map: false, map: null, rooms: [],
+    } });
+  }
+
   // Routines ("scenes"), as local_roborock_server keeps them; the run only tracks which one is going.
   const sceneList = path.match(/^\/user\/scene\/device\/([^/]+)$/);
   if (req.method === 'GET' && sceneList) {

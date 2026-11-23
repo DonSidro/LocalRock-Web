@@ -5,7 +5,7 @@ import type { ParsedMap } from '../shared/map.js';
 import { config } from './config.js';
 import { log } from './log.js';
 import { MqttLink } from './net/mqttLink.js';
-import { LoginRejectedError, ServerApi, type Device, type Home, type Product, type UserData } from './net/serverApi.js';
+import { LoginRejectedError, ServerApi, routineRunMessage, type LastKnownRaw, type Device, type Home, type Product, type UserData } from './net/serverApi.js';
 import { Onboarding } from './onboarding/onboarding.js';
 import { deriveMqttCreds, mqttTopicsFor } from './protocol/mqttCreds.js';
 import type { HawkCreds } from './protocol/hawk.js';
@@ -23,6 +23,7 @@ import { VacuumSession } from './vacuum/session.js';
 const PROBE_ATTEMPTS = 2;
 const PROBE_TIMEOUT_MS = 4_000;
 const PROBE_LINK_WAIT_MS = 5_000;
+
 /**
  * The robots in the order the list shows them: by name, ignoring case, with numbers in a name compared
  * as numbers so "Robot 2" comes before "Robot 10". The server returns them in pairing order, which puts
@@ -127,6 +128,7 @@ export class App extends EventEmitter {
         name: d.name,
         model: this.products.get(d.duid)?.model ?? null,
         paired: !!d.localKey,
+        unpaired: this.isUnpaired(d.duid, !!d.localKey, reach),
         online: reach === 'ONLINE' ? true : reach === 'OFFLINE' || reach === 'CHECKING' ? false : d.online === true,
         reachability: reach,
       };
@@ -277,9 +279,45 @@ export class App extends EventEmitter {
       this.broadcastDevices();
     }
     void this.probeReachability();
+    void this.refreshNeverHeard();
   }
 
   /** Ask every paired robot directly; the server's online flag can't be trusted with one robot. */
+  /** Robots the server has never heard from (local_roborock_server #251); empty on a server without it. */
+  private neverHeard = new Set<string>();
+  private neverHeardRun = 0;
+
+  private async refreshNeverHeard(): Promise<void> {
+    const run = ++this.neverHeardRun;
+    const never = new Set<string>();
+    await Promise.all(this.devices.map(async (d) => {
+      try {
+        if (!(await this.api.lastKnown(d.duid, false)).known) never.add(d.duid);
+      } catch {
+        // An older server: nothing is marked.
+      }
+    }));
+    if (run !== this.neverHeardRun) return;
+    this.neverHeard = never;
+    this.broadcastDevices();
+  }
+
+  /** A never-heard robot we probe (it has a local key) is unpaired only once the probe says offline; others unless reported online. */
+  private isUnpaired(duid: string, probed: boolean, reach: Reachability | null): boolean {
+    if (!this.neverHeard.has(duid)) return false;
+    return probed ? reach === 'OFFLINE' : reach !== 'ONLINE';
+  }
+
+  /** What the server last heard from a robot, or null when it knows nothing or can't say. */
+  async lastKnown(duid: string, includeMap: boolean): Promise<LastKnownRaw | null> {
+    try {
+      const k = await this.api.lastKnown(duid, includeMap);
+      return k.known ? k : null;
+    } catch {
+      return null;
+    }
+  }
+
   private async probeReachability(): Promise<void> {
     const targets = this.devices.filter((d) => d.localKey);
     for (const d of targets) {
