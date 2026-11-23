@@ -378,7 +378,7 @@ export function RobotSettingsTab({ snap, rooms, actions }: { snap: VacuumSnapsho
 
         <Panel title="About" id="settings-about">
           <dl className="facts">
-            <dt>Model</dt><dd>{snap.model ?? 'Unknown'}</dd>
+            <dt>Model</dt><dd>{snap.modelName ?? 'Unknown'}{snap.model && snap.modelName !== snap.model ? <span className="muted"> ({snap.model})</span> : null}</dd>
             <dt>Firmware</dt><dd>{snap.firmware ?? 'Unknown'}</dd>
             <dt>Device ID</dt><dd className="mono">{snap.duid}</dd>
           </dl>

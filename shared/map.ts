@@ -8,7 +8,8 @@ import type { MapObstacle, PatrolPoint } from './obstacles.js';
  *   canvas     cell space scaled to the size the bitmap is drawn at
  */
 
-export type ZoneKind = 'NO_GO' | 'NO_MOP' | 'CARPET' | 'THRESHOLD';
+/** ERASER is an area removed with the official app's Remove tool (legacy block 47); it is never edited or sent. */
+export type ZoneKind = 'NO_GO' | 'NO_MOP' | 'CARPET' | 'THRESHOLD' | 'ERASER';
 export type MapFormat = 'LEGACY' | 'B01';
 
 export interface MapPoint {
@@ -42,7 +43,20 @@ export interface MapRoom {
   name: string;
   labelNormX: number | null;
   labelNormY: number | null;
+  /** How many cells the room reaches across (and up and down) around its label, so a name fits inside it. */
+  labelSpanCells?: number | null;
+  labelSpanCellsY?: number | null;
+  /** The room type the robot keeps for this room (see ROOM_TYPES); null without a tag column or entry. */
+  tag?: number | null;
+  /** The robot's room table lists this room, so it counts as named even without a tag column. */
+  inRoomTable?: boolean;
 }
+
+/** One vertex of a floor-plan polygon in whole cells of the image frame; type 1 outer wall, 2 inner edge, 3 door. */
+export interface FloorPlanPoint { x: number; y: number; type: number }
+
+/** One room's closed rectilinear outline (legacy block 55); segment is the room id, the last point joins the first. */
+export interface FloorPlanZone { segment: number; points: FloorPlanPoint[] }
 
 export interface ParsedMap {
   width: number;
@@ -77,6 +91,14 @@ export interface ParsedMap {
   thresholds: MapZone[];
   /** Legacy raw pixels: (v >> 3) & 0x1f is the room id. */
   originalGrid: Uint8Array | null;
+  /** Per path point: bit 1 is a trip to wash the mop (legacy block 18). Empty if unknown. */
+  pathFlags: number[];
+  /** One byte per grid cell, bit 0 where the robot has seen carpet (legacy block 17); null if the map has none. */
+  carpetMask: Uint8Array | null;
+  /** Room polygons of the floor-plan look (legacy block 55), in the image's cell frame; empty if the map has none. */
+  zoneLines: FloorPlanZone[];
+  /** Areas removed with the official Remove tool (legacy block 47), in robot mm; nothing is drawn inside them. */
+  eraserZones: MapZone[];
 }
 
 /** Floor material ids seen on the S8 Pro Ultra and in captures of the official app. */
@@ -303,6 +325,7 @@ export function roomAtNorm(map: ParsedMap, normX: number, normY: number): MapRoo
   const col = clampInt(Math.trunc(normX * map.width), 0, map.width - 1);
   const row = clampInt(Math.trunc((1 - normY) * map.height), 0, map.height - 1);
   const idx = row * map.width + col;
+  if (erasedCells(map)?.[idx]) return null;
 
   if (map.originalGrid) {
     const v = map.originalGrid[idx]!;
@@ -321,8 +344,9 @@ export function roomAtNorm(map: ParsedMap, normX: number, normY: number): MapRoo
   // Unassigned floor or unmatched segment: fall back to the nearest labelled room.
   let best: MapRoom | null = null;
   let bestD = Infinity;
+  const gone = erasedRoomIds(map);
   for (const r of map.rooms) {
-    if (r.labelNormX == null || r.labelNormY == null) continue;
+    if (r.labelNormX == null || r.labelNormY == null || gone.has(r.id)) continue;
     const dx = r.labelNormX - normX;
     const dy = r.labelNormY - normY;
     const d = dx * dx + dy * dy;
@@ -345,7 +369,8 @@ export interface ContentBounds { left: number; top: number; right: number; botto
  * Normalised bounds (0..1, drawn-image space with Y flipped) of the cells that contain floor or
  * wall, so a view can frame the floor plan instead of the mostly empty grid.
  */
-export function contentBoundsNorm(map: ParsedMap): ContentBounds {
+export function contentBoundsNorm(map: ParsedMap, floorPlan = true): ContentBounds {
+  const erased = erasedCells(map);
   let minX = map.width, maxX = -1, minY = map.height, maxY = -1;
   for (let y = 0; y < map.height; y++) {
     const rowOff = y * map.width;
@@ -353,19 +378,113 @@ export function contentBoundsNorm(map: ParsedMap): ContentBounds {
     for (let x = 0; x < map.width; x++) {
       const gv = map.grid[rowOff + x]!;
       if (gv !== 127 && gv !== 128) continue;
+      if (erased?.[rowOff + x]) continue;
       if (x < minX) minX = x;
       if (x > maxX) maxX = x;
       if (drawY < minY) minY = drawY;
       if (drawY > maxY) maxY = drawY;
     }
   }
-  if (maxX < 0 || maxY < 0) return { left: 0, top: 0, right: 1, bottom: 1 };
-  return {
+  const cells = maxX < 0 || maxY < 0 ? null : {
     left: minX / map.width,
     top: minY / map.height,
     right: (maxX + 1) / map.width,
     bottom: (maxY + 1) / map.height,
   };
+  const gone = erasedRoomIds(map);
+  const zones = floorPlan ? map.zoneLines.filter((z) => !gone.has(z.segment)) : [];
+  if (zones.length === 0) return cells ?? { left: 0, top: 0, right: 1, bottom: 1 };
+  return floorPlanBoundsNorm(cells, zones, map.width, map.height, FLOOR_PLAN_OUTER_WIDTH_CELLS);
+}
+
+/** The floor-plan outer wall's width in cells as a thumbnail draws it (2.8 px at 4 px per cell). */
+export const FLOOR_PLAN_OUTER_WIDTH_CELLS = 2.8 / 4;
+
+/** The cells' and floor-plan polygons' bounds, grown by half a stroke of strokeCells and kept inside the image. */
+export function floorPlanBoundsNorm(cells: ContentBounds | null, zones: FloorPlanZone[], width: number, height: number, strokeCells: number): ContentBounds {
+  const pts = zones.flatMap((z) => z.points);
+  if (pts.length === 0) return cells ?? { left: 0, top: 0, right: 1, bottom: 1 };
+  const half = strokeCells / 2;
+  let left = (Math.min(...pts.map((p) => p.x)) - half) / width;
+  let right = (Math.max(...pts.map((p) => p.x)) + half) / width;
+  let top = (height - Math.max(...pts.map((p) => p.y)) - half) / height;
+  let bottom = (height - Math.min(...pts.map((p) => p.y)) + half) / height;
+  if (cells) {
+    left = Math.min(left, cells.left); right = Math.max(right, cells.right);
+    top = Math.min(top, cells.top); bottom = Math.max(bottom, cells.bottom);
+  }
+  return { left: Math.max(0, left), top: Math.max(0, top), right: Math.min(1, right), bottom: Math.min(1, bottom) };
+}
+
+// ---- Removed areas (legacy block 47) -------------------------------------------------------------
+
+const erasedCache = new WeakMap<ParsedMap, Uint8Array | null>();
+const erasedRoomsCache = new WeakMap<ParsedMap, Set<number>>();
+
+/** One flag per grid cell, 1 where an eraser zone covers the cell's centre; null when the map has none. */
+export function erasedCells(map: ParsedMap): Uint8Array | null {
+  if (!map.eraserZones || map.eraserZones.length === 0) return null;
+  const hit = erasedCache.get(map);
+  if (hit !== undefined) return hit;
+  const mask = new Uint8Array(map.width * map.height);
+  const clamp = (v: number, hi: number) => Math.min(hi, Math.max(0, v));
+  for (const zone of map.eraserZones) {
+    const b = zoneBounds(zone);
+    const colLo = clamp(Math.trunc(b.minX / 50) - map.pixelOffsetLeft - 1, map.width);
+    const colHi = clamp(Math.trunc(b.maxX / 50) - map.pixelOffsetLeft + 2, map.width);
+    const rowLo = clamp(Math.trunc(b.minY / 50) - map.pixelOffsetTop - 1, map.height);
+    const rowHi = clamp(Math.trunc(b.maxY / 50) - map.pixelOffsetTop + 2, map.height);
+    for (let row = rowLo; row < rowHi; row++) {
+      const cy = (row + map.pixelOffsetTop) * 50 + 25;
+      for (let col = colLo; col < colHi; col++) {
+        const cx = (col + map.pixelOffsetLeft) * 50 + 25;
+        if (zoneContains(zone, cx, cy)) mask[row * map.width + col] = 1;
+      }
+    }
+  }
+  erasedCache.set(map, mask);
+  return mask;
+}
+
+/** True when the point, in robot mm, lies inside any eraser zone. */
+export function isErasedMm(map: ParsedMap, xMm: number, yMm: number): boolean {
+  return (map.eraserZones ?? []).some((z) => zoneContains(z, xMm, yMm));
+}
+
+/** The room id stored for one grid cell, or null where the cell is outside, a wall, unassigned or erased. */
+export function roomIdAtCell(map: ParsedMap, idx: number): number | null {
+  if (idx < 0 || idx >= map.grid.length || erasedCells(map)?.[idx]) return null;
+  return rawRoomIdAtCell(map, idx);
+}
+
+function rawRoomIdAtCell(map: ParsedMap, idx: number): number | null {
+  if (map.originalGrid) {
+    const v = map.originalGrid[idx]!;
+    if ((v & 0x07) !== 7) return null;
+    const id = (v >>> 3) & 0x1f;
+    return id > 0 ? id : null;
+  }
+  const v = map.grid[idx]!;
+  return v === 0 || v === 127 || v === 128 ? null : v;
+}
+
+/** Rooms whose every cell is erased: they are not drawn, labelled or picked. */
+export function erasedRoomIds(map: ParsedMap): Set<number> {
+  const erased = erasedCells(map);
+  if (!erased) return new Set();
+  const hit = erasedRoomsCache.get(map);
+  if (hit) return hit;
+  const total = new Map<number, number>();
+  const gone = new Map<number, number>();
+  for (let i = 0; i < map.grid.length; i++) {
+    const id = rawRoomIdAtCell(map, i);
+    if (id === null) continue;
+    total.set(id, (total.get(id) ?? 0) + 1);
+    if (erased[i]) gone.set(id, (gone.get(id) ?? 0) + 1);
+  }
+  const out = new Set([...total].filter(([id, n]) => gone.get(id) === n).map(([id]) => id));
+  erasedRoomsCache.set(map, out);
+  return out;
 }
 
 function clampInt(v: number, lo: number, hi: number): number {

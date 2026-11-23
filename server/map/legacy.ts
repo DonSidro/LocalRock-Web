@@ -1,5 +1,5 @@
 import { parseObstacles, parsePatrolPoints, type MapObstacle, type PatrolPoint } from '../../shared/obstacles.js';
-import { legacyGrid, type MapPoint, type MapRoom, type MapZone, type ParsedMap, type VirtualWall, type ZoneKind } from '../../shared/map.js';
+import { legacyGrid, type FloorPlanZone, type MapPoint, type MapRoom, type MapZone, type ParsedMap, type VirtualWall, type ZoneKind } from '../../shared/map.js';
 
 /*
  * Legacy "rr" map parser, ported from LocalRock's LegacyMap.kt. Blocks are TLV: u16 type, u16
@@ -22,6 +22,14 @@ const BLOCK_THRESHOLDS = 28;
 const BLOCK_SEGMENT_MATERIAL_DIRECTIONS = 32;
 const BLOCK_CARPETS_WITH_FLAGS = 39;
 const BLOCK_DIGEST = 1024;
+const BLOCK_CARPET_MAP = 17; // one byte per image cell, bit 0 on carpet
+const BLOCK_MOP_PATH = 18; // one flag byte per path point
+const BLOCK_ERASER_ZONES = 47;
+const BLOCK_ZONE_LINES = 55;
+const ZONE_HEADER_BYTES = 6;
+const ZONE_POINT_MIN_BYTES = 6;
+/** Rows either side of a room's label that its width is read over. */
+const LABEL_SPAN_ROWS = 8;
 
 /** 19 no-carpet, 23 no-vacuum (mop-only), 30 cliff, 31 smart door-sill areas: detected, never rewritten. */
 export const UNMODELED_RESTRICTION_BLOCKS: ReadonlySet<number> = new Set([19, 23, 30, 31]);
@@ -56,6 +64,10 @@ export function parseLegacyMap(input: Uint8Array): ParsedMap {
   const obstacles: MapObstacle[] = [];
   let patrolPoints: PatrolPoint[] = [];
   let patrolTaskId: number | null = null;
+  let pathFlags: number[] = [];
+  let carpetMask: Uint8Array | null = null;
+  let zoneBlock: [number, number, number] | null = null;
+  let eraserZones: MapZone[] = [];
 
   let off = headerLen;
   while (off + 8 <= bytes.length) {
@@ -103,6 +115,18 @@ export function parseLegacyMap(input: Uint8Array): ParsedMap {
         }
         break;
       }
+      case BLOCK_MOP_PATH:
+        pathFlags = Array.from(bytes.subarray(body, body + blockDataLen));
+        break;
+      case BLOCK_CARPET_MAP:
+        carpetMask = new Uint8Array(bytes.subarray(body, body + blockDataLen));
+        break;
+      case BLOCK_ZONE_LINES:
+        zoneBlock = [off, blockHeaderLen, blockDataLen];
+        break;
+      case BLOCK_ERASER_ZONES:
+        eraserZones = parseEraserZones(bytes, off, blockHeaderLen, blockDataLen);
+        break;
       case BLOCK_FORBIDDEN_ZONES:
         noGoZones = parseQuadZones(bytes, off, blockHeaderLen, blockDataLen, 'NO_GO');
         break;
@@ -171,12 +195,18 @@ export function parseLegacyMap(input: Uint8Array): ParsedMap {
   const cells = roomLabelCells(roomAt, imageWidth, imageHeight);
   const rooms: MapRoom[] = [...cells.entries()]
     .sort((a, b) => a[0] - b[0])
-    .map(([roomId, [x, y]]) => ({
-      id: roomId,
-      name: `Room ${roomId}`,
-      labelNormX: clamp01((x + 0.5) / imageWidth),
-      labelNormY: clamp01((imageHeight - 1 - y + 0.5) / imageHeight),
-    }));
+    .map(([roomId, [x, y]]) => {
+      const [spanX, spanY] = labelSpans(roomAt, imageWidth, imageHeight, roomId, x, y);
+      return {
+        id: roomId,
+        name: `Room ${roomId}`,
+        labelNormX: clamp01((x + 0.5) / imageWidth),
+        labelNormY: clamp01((imageHeight - 1 - y + 0.5) / imageHeight),
+        labelSpanCells: spanX,
+        labelSpanCellsY: spanY,
+      };
+    });
+  const zoneLines = zoneBlock ? parseZoneLines(bytes, zoneBlock[0], zoneBlock[1], zoneBlock[2], imageLeft, imageTop) : [];
 
   return {
     obstacles,
@@ -203,7 +233,78 @@ export function parseLegacyMap(input: Uint8Array): ParsedMap {
     carpetFlagsPresent: carpetsFromFlags !== null,
     thresholds,
     originalGrid: pixels,
+    pathFlags: pathFlags.length === path.length ? pathFlags : [],
+    carpetMask: carpetMask && carpetMask.length === grid.length ? carpetMask : null,
+    zoneLines,
+    eraserZones,
   };
+}
+
+/**
+ * How far a room reaches sideways around its label, over a few rows so gaps inside it (furniture,
+ * unscanned patches) don't make it look narrower than it is; and the same up and down, for a map
+ * turned a quarter turn.
+ */
+function labelSpans(roomAt: Int32Array, w: number, h: number, roomId: number, lx: number, ly: number): [number, number] {
+  let left = lx, right = lx, top = ly, bottom = ly;
+  for (let row = ly - LABEL_SPAN_ROWS; row <= ly + LABEL_SPAN_ROWS; row++) {
+    if (row < 0 || row >= h) continue;
+    for (let x = 0; x < w; x++) {
+      if (roomAt[row * w + x] === roomId) { if (x < left) left = x; if (x > right) right = x; }
+    }
+  }
+  for (let col = lx - LABEL_SPAN_ROWS; col <= lx + LABEL_SPAN_ROWS; col++) {
+    if (col < 0 || col >= w) continue;
+    for (let y = 0; y < h; y++) {
+      if (roomAt[y * w + col] === roomId) { if (y < top) top = y; if (y > bottom) bottom = y; }
+    }
+  }
+  return [right - left + 1, bottom - top + 1];
+}
+
+/** Block 47: entryCount records of a u32 id and four corners of two u16 values each, in robot mm. */
+function parseEraserZones(b: Buffer, off: number, headerLen: number, dataLen: number): MapZone[] {
+  const count = Math.min(entryCount(b, off, headerLen, dataLen), Math.floor(dataLen / 20));
+  const body = off + headerLen;
+  const out: MapZone[] = [];
+  for (let i = 0; i < count; i++) {
+    const p = body + i * 20 + 4;
+    out.push({
+      x0: b.readUInt16LE(p), y0: b.readUInt16LE(p + 2), x1: b.readUInt16LE(p + 4), y1: b.readUInt16LE(p + 6),
+      x2: b.readUInt16LE(p + 8), y2: b.readUInt16LE(p + 10), x3: b.readUInt16LE(p + 12), y3: b.readUInt16LE(p + 14),
+      kind: 'ERASER',
+    });
+  }
+  return out;
+}
+
+/**
+ * Block 55: u32 zone count at off+8, then per zone u16 segment, u16 point count, u16 point size and
+ * points of u16 x, u16 y, i16 type (mm); a zone that overruns the payload ends the block.
+ */
+function parseZoneLines(b: Buffer, off: number, headerLen: number, dataLen: number, left: number, top: number): FloorPlanZone[] {
+  if (headerLen < 12) return [];
+  const declared = b.readUInt32LE(off + 8);
+  const zones: FloorPlanZone[] = [];
+  let p = off + headerLen;
+  const end = p + dataLen;
+  while (zones.length < declared && p + ZONE_HEADER_BYTES <= end) {
+    const segment = b.readUInt16LE(p);
+    const count = b.readUInt16LE(p + 2);
+    const size = b.readUInt16LE(p + 4);
+    p += ZONE_HEADER_BYTES;
+    if (size < ZONE_POINT_MIN_BYTES || p + count * size > end) break;
+    if (count >= 3) {
+      const points = [];
+      for (let i = 0; i < count; i++) {
+        const q = p + i * size;
+        points.push({ x: Math.trunc(b.readUInt16LE(q) / 50) - left, y: Math.trunc(b.readUInt16LE(q + 2) / 50) - top, type: b.readInt16LE(q + 4) });
+      }
+      zones.push({ segment, points });
+    }
+    p += count * size;
+  }
+  return zones;
 }
 
 function readPoint(b: Buffer, off: number): MapPoint {

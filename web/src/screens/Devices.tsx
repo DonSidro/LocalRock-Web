@@ -1,9 +1,10 @@
+import { modelSubtitle } from '../../../shared/products';
 import { useEffect, useRef } from 'react';
 import type { DeviceSummary } from '../../../shared/api';
 import { contentBoundsNorm, type ParsedMap } from '../../../shared/map';
 import { post } from '../api';
 import { Icon } from '../icons';
-import { DARK, LIGHT, renderFloor } from '../map/render';
+import { DARK, LIGHT, drawFloorPlanStrokes, renderFloor } from '../map/render';
 import { batteryColor, isCharging, primaryAction, statusLine } from '../robotStatus';
 import { navigate, vacRoute } from '../router';
 import { attempt, useStore, useWatch } from '../store';
@@ -69,7 +70,7 @@ function RobotCard({ device }: { device: DeviceSummary }) {
         <Link to={{ name: 'add', duid: device.duid }} className="robot-card-map" title={`Pair ${device.name}`}><Icon name="robot" size={40} className="muted" /></Link>
         <div className="robot-card-body">
           <h3 className="ellipsis">{device.name}</h3>
-          {device.model && <span className="muted small">{device.model}</span>}
+          {modelSubtitle(device.name, device.modelName) && <span className="muted small">{modelSubtitle(device.name, device.modelName)}</span>}
           <span className="row small" style={{ color: 'var(--error)' }}><span className="dot" style={{ background: 'var(--error)' }} />Not paired yet</span>
           <p className="muted small">Your server has never heard from this robot. Pair it with Add vacuum to control it here.</p>
           <Link to={{ name: 'add', duid: device.duid }} className="btn secondary sm">Add vacuum</Link>
@@ -84,7 +85,7 @@ function RobotCard({ device }: { device: DeviceSummary }) {
         <div className="robot-card-map"><Icon name="robot" size={40} className="muted" /></div>
         <div className="robot-card-body">
           <h3 className="ellipsis">{device.name}</h3>
-          {device.model && <span className="muted small">{device.model}</span>}
+          {modelSubtitle(device.name, device.modelName) && <span className="muted small">{modelSubtitle(device.name, device.modelName)}</span>}
           <span className="row small" style={{ color: 'var(--error)' }}><span className="dot" style={{ background: 'var(--error)' }} />Setup incomplete</span>
           <p className="muted small">This robot has no local key yet. Re-run pairing on your server to control it.</p>
         </div>
@@ -111,7 +112,7 @@ function RobotCard({ device }: { device: DeviceSummary }) {
             </span>
           )}
         </div>
-        {device.model && <span className="muted small">{device.model}</span>}
+        {modelSubtitle(device.name, device.modelName) && <span className="muted small">{modelSubtitle(device.name, device.modelName)}</span>}
         <span className="row small" style={{ gap: 6, color: offline ? 'var(--on-surface-variant)' : line?.color ?? 'var(--on-surface-variant)' }}>
           {line?.active ? <span className="pulse" /> : <span className="dot" style={{ background: offline ? 'var(--outline)' : line?.error ? 'var(--error)' : 'var(--good)' }} />}
           {offline ? 'Offline' : line?.text ?? (device.reachability === 'CHECKING' ? 'Checking...' : 'Online')}
@@ -143,7 +144,7 @@ function MapThumb({ map }: { map: ParsedMap }) {
   useEffect(() => {
     const c = ref.current;
     if (!c) return;
-    const floor = renderFloor(map, dark ? DARK : LIGHT);
+    const floor = renderFloor(map, dark ? DARK : LIGHT, 2);
     const b = contentBoundsNorm(map);
     const sx = b.left * map.width, sy = b.top * map.height;
     const sw = Math.max(1, (b.right - b.left) * map.width), sh = Math.max(1, (b.bottom - b.top) * map.height);
@@ -153,9 +154,12 @@ function MapThumb({ map }: { map: ParsedMap }) {
     c.height = Math.max(1, Math.round(h * dpr));
     const ctx = c.getContext('2d')!;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.imageSmoothingEnabled = false;
+    ctx.imageSmoothingEnabled = true;
     const scale = Math.min(w / sw, h / sh) * 0.88;
-    ctx.drawImage(floor, sx, sy, sw, sh, (w - sw * scale) / 2, (h - sh * scale) / 2, sw * scale, sh * scale);
+    const ox = (w - sw * scale) / 2, oy = (h - sh * scale) / 2;
+    const s = floor.scale;
+    ctx.drawImage(floor.canvas, sx * s, sy * s, sw * s, sh * s, ox, oy, sw * scale, sh * scale);
+    drawFloorPlanStrokes(ctx, floor.shapes, (x, y) => ({ x: ox + (x - sx) * scale, y: oy + (y - sy) * scale }));
   }, [map, dark]);
   return <canvas ref={ref} className="map-thumb" aria-hidden="true" />;
 }

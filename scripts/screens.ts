@@ -66,6 +66,21 @@ async function main() {
   await page.locator('.robot-card', { hasText: 'S8 Pro Ultra (simulated)' }).getByRole('link', { name: 'Open', exact: true }).click();
   const box = await mapBox(page);
   await shot(page, '05-overview');
+  // The map turned a quarter turn, then the 3D model, dragged round with the right button
+  await page.getByRole('button', { name: 'Rotate the map 90°' }).click();
+  await shot(page, '05b-rotated');
+  await page.getByRole('button', { name: '2D', exact: true }).click();
+  await shot(page, '05c-3d');
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down({ button: 'right' });
+  await page.mouse.move(box.x + box.width / 2 + 120, box.y + box.height / 2 - 60, { steps: 8 });
+  await page.mouse.up({ button: 'right' });
+  await shot(page, '05d-3d-turned');
+  await page.getByRole('button', { name: '3D', exact: true }).click();
+  await page.getByRole('button', { name: 'Rotate the map 90°' }).click();
+  await page.getByRole('button', { name: 'Rotate the map 90°' }).click();
+  await page.getByRole('button', { name: 'Rotate the map 90°' }).click();
+  await page.waitForTimeout(300);
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   await page.getByRole('button', { name: 'Clean 1 room' }).waitFor({ timeout: 5_000 });
   await page.getByRole('button', { name: 'None' }).click();
@@ -205,6 +220,9 @@ async function main() {
   await openVac(page);
   await mapBox(page);
   await shot(page, '34-dark-overview');
+  await page.getByRole('button', { name: '2D', exact: true }).click();
+  await shot(page, '34b-dark-3d');
+  await page.getByRole('button', { name: '3D', exact: true }).click();
   await page.goto(`${BASE}/#/`);
   await page.locator('.robot-card .map-thumb').nth(1).waitFor({ timeout: 30_000 });
   await shot(page, '35-dark-home');

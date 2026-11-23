@@ -139,6 +139,13 @@ export class SimRobot {
       pixels: this.pixels!, noGo: this.noGo, noMop: this.noMop, walls: this.walls, carpets: this.carpets,
       thresholds: this.thresholds, materials: this.materials, directions: this.directions, robot: this.robotPos,
       obstacles: [{ x: 25_200, y: 24_800, type: 2, photoId: 'OBS0001' }, { x: 26_600, y: 26_000, type: 0, photoId: 'OBS0002' }],
+      // The map look's layers; SIM_FLOOR_PLAN=1 also sends block 55, for the floor-plan look.
+      look: {
+        carpetRoom: 18,
+        washTrip: [40, 80],
+        eraser: process.env['SIM_ERASER'] ? [{ x0: 20_000, y0: 30_000, x1: 23_000, y1: 30_000, x2: 23_000, y2: 27_000, x3: 20_000, y3: 27_000, kind: 'ERASER' }] : [],
+        floorPlan: process.env['SIM_FLOOR_PLAN'] === '1',
+      },
       ...(cruise ? { patrol: { taskId: 77, points: [{ x: 25_000, y: 25_000, photoIds: ['PH1', 'PH2'] }, { x: 27_000, y: 25_500, photoIds: ['PH3'] }] } } : {}),
     });
   }

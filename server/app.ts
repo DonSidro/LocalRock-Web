@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { productDisplayName } from '../shared/products.js';
 import { ROOM_TYPES, isSmartPlanSupported, isWaterSlideSupported, roomNameProblem } from '../shared/codes.js';
 import type { AppState, DeviceSummary, MapDto, Reachability, RobotAlert, Routine, ServerMessage, VacuumSnapshot } from '../shared/api.js';
 import type { ParsedMap } from '../shared/map.js';
@@ -127,6 +128,7 @@ export class App extends EventEmitter {
         duid: d.duid,
         name: d.name,
         model: this.products.get(d.duid)?.model ?? null,
+        modelName: productDisplayName(this.products.get(d.duid)),
         paired: !!d.localKey,
         unpaired: this.isUnpaired(d.duid, !!d.localKey, reach),
         online: reach === 'ONLINE' ? true : reach === 'OFFLINE' || reach === 'CHECKING' ? false : d.online === true,
@@ -377,6 +379,7 @@ export class App extends EventEmitter {
       duid,
       name: d.name,
       model: product?.model ?? null,
+      modelName: productDisplayName(product),
       firmware: d.fv ?? null,
       featureSet: d.featureSet ?? null,
       newFeatureSet: d.newFeatureSet ?? null,
@@ -509,5 +512,9 @@ export function toMapDto(map: ParsedMap, version: number): MapDto {
     obstacles: map.obstacles,
     patrolPoints: map.patrolPoints,
     patrolTaskId: map.patrolTaskId,
+    pathFlags: map.pathFlags,
+    carpetMask: map.carpetMask ? b64(map.carpetMask) : null,
+    zoneLines: map.zoneLines,
+    eraserZones: map.eraserZones,
   };
 }

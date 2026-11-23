@@ -19,6 +19,7 @@ import {
 } from '../ui';
 import { useRobotActions } from '../useRobot';
 import { isPetSearchSupported } from '../../../shared/matter';
+import { modelSubtitle } from '../../../shared/products';
 import { CameraScreen } from './Camera';
 import { MapEditorScreen } from './MapEditor';
 import { RemoteScreen } from './Remote';
@@ -85,7 +86,7 @@ export function VacuumWorkspace({ duid, tab, tool }: { duid: string; tab: VacTab
         : !device.paired ? 'This robot has no local key yet. Re-run pairing on your server to control it.' : null;
     return (
       <div className="page">
-        <PageHeader title={device?.name ?? 'Loading'} sub={device?.model ?? undefined} />
+        <PageHeader title={device?.name ?? 'Loading'} sub={device ? modelSubtitle(device.name, device.modelName) ?? undefined : undefined} />
         {problem ? <Empty icon="robot" title="Can't open this robot" text={problem} /> : <div className="empty"><Spinner big /></div>}
       </div>
     );
@@ -123,7 +124,7 @@ export function VacuumWorkspace({ duid, tab, tool }: { duid: string; tab: VacTab
         )}
       >
         <div className="header-meta">
-          {snap.model && <span className="muted">{snap.model}</span>}
+          {modelSubtitle(snap.name, snap.modelName) && <span className="muted">{modelSubtitle(snap.name, snap.modelName)}</span>}
           <span className="chip-status" style={{ color: line.color }}>
             {line.error ? <Icon name="error" size={16} /> : line.active ? <span className="pulse" /> : <span className="dot" style={{ background: 'var(--good)' }} />}
             {line.text}
@@ -315,23 +316,28 @@ function Overview({ duid, snap, map, tool, run, read, busy, selected, setSelecte
               selectedRoomIds={tool === 'rooms' ? selected : []}
               focusRoomId={tool === 'rooms' ? hoverRoom : null}
               drawing={tool !== 'rooms'}
+              viewKey={duid}
+              allow3D={tool === 'rooms'}
+              faintRoute={!(snap.status.state !== undefined && (ACTIVE_STATES.has(snap.status.state) || snap.status.state === State.PAUSED))}
               overlayKey={[tool, zones, draft, target, map.obstacles, selectedZone]}
               overlay={({ ctx, api }) => {
                 mapApiRef.current = api;
                 drawObstacles(ctx, api, map.obstacles);
                 if (tool === 'zones') {
                   const color = getComputedStyle(document.documentElement).getPropertyValue('--primary').trim() || '#0b7a75';
+                  // Through the four corners, so a zone stays on its floor when the map is turned.
                   const drawZone = (z: Zone, dashed: boolean) => {
-                    const a = api.toScreen(z.x1, z.y2);
-                    const b = api.toScreen(z.x2, z.y1);
+                    ctx.beginPath();
+                    zoneCorners(z).forEach(([x, y], i) => { const c = api.toScreen(x, y); if (i === 0) ctx.moveTo(c.x, c.y); else ctx.lineTo(c.x, c.y); });
+                    ctx.closePath();
                     ctx.globalAlpha = dashed ? 0.15 : 0.3;
                     ctx.fillStyle = color;
-                    ctx.fillRect(a.x, a.y, b.x - a.x, b.y - a.y);
+                    ctx.fill();
                     ctx.globalAlpha = 1;
                     ctx.strokeStyle = color;
                     ctx.lineWidth = 2;
                     ctx.setLineDash(dashed ? [8, 5] : []);
-                    ctx.strokeRect(a.x, a.y, b.x - a.x, b.y - a.y);
+                    ctx.stroke();
                     ctx.setLineDash([]);
                   };
                   zones.forEach((z) => drawZone(z, false));

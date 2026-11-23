@@ -68,6 +68,7 @@ function kindTitle(kind: ZoneKind | null, round = false): string {
     case 'NO_MOP': return 'No-mop zone';
     case 'CARPET': return round ? 'Round carpet' : 'Carpet';
     case 'THRESHOLD': return 'Threshold';
+    case 'ERASER': return 'Removed area';
   }
 }
 
@@ -76,7 +77,7 @@ function kindHelp(kind: ZoneKind | null, round: boolean): string {
   switch (kind) {
     case null: case 'THRESHOLD': return 'Drag to move, drag the ends to reshape.';
     case 'NO_GO': case 'CARPET': return 'Drag to move. Corners resize, the knob rotates.';
-    case 'NO_MOP': return "Set in the Roborock app. LocalRock can't change it yet.";
+    case 'NO_MOP': case 'ERASER': return "Set in the Roborock app. LocalRock can't change it yet.";
   }
 }
 

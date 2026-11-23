@@ -115,6 +115,10 @@ export function decodeMap(dto: MapDto): ParsedMap {
     obstacles: dto.obstacles ?? [],
     patrolPoints: dto.patrolPoints ?? [],
     patrolTaskId: dto.patrolTaskId ?? null,
+    pathFlags: dto.pathFlags ?? [],
+    carpetMask: dto.carpetMask ? b64(dto.carpetMask) : null,
+    zoneLines: dto.zoneLines ?? [],
+    eraserZones: dto.eraserZones ?? [],
   };
 }
 

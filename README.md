@@ -40,6 +40,12 @@ Everything the app does, laid out for a desktop browser:
 - Overview: the map beside an inspector column (status, rooms, cleaning mode, dock). The map has
   three tools: pick rooms, draw zones, set a Pin & Go target. Scroll to zoom, drag to pan,
   right-drag to pan while drawing, double-click to fit; floor picker for multi-level homes
+- The map drawn the way the Roborock app does: the official four room colours, wood, tile and carpet
+  textures, smooth edges, the floor-plan outline with doors where the robot sends one, removed areas
+  left out, the route with the ground it covered, room names on pills with a room-type badge. Turn it
+  in quarter turns, or show it as a 3D model (right-drag or Ctrl+drag, two fingers on touch, to turn
+  and tilt); both are remembered per robot in the browser. Robots show the name their model is sold
+  under
 - Keyboard shortcuts: C clean / pause / resume, D dock, R refresh the map, 1-3 map tools, Esc to
   clear, Delete to remove a shape in the editor, ? for the list
 - Clean, clean picked rooms in the order picked, pause, resume, stop, return to dock

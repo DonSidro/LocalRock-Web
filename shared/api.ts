@@ -4,7 +4,7 @@ import type { AdvertisedFeature } from './features.js';
 import type { MapObstacle, PatrolPoint } from './obstacles.js';
 import type { FirmwareCheck, FirmwareProgress } from './firmware.js';
 import type { VoiceInstallState } from './voice.js';
-import type { MapPoint, MapRoom, MapZone, VirtualWall } from './map.js';
+import type { FloorPlanZone, MapPoint, MapRoom, MapZone, VirtualWall } from './map.js';
 
 /* Data exchanged between the server and the browser. */
 
@@ -108,6 +108,8 @@ export interface VacuumSnapshot {
   duid: string;
   name: string;
   model: string | null;
+  /** The name Roborock sells the model under (the server's product name, else the catalogue's). */
+  modelName: string | null;
   firmware: string | null;
   /** Decimal feature bits from the server, for DockCapabilities and the feature checks. */
   featureSet: string | null;
@@ -183,6 +185,11 @@ export interface MapDto {
   obstacles: MapObstacle[];
   patrolPoints: PatrolPoint[];
   patrolTaskId: number | null;
+  pathFlags: number[];
+  /** Base64, one byte per cell; null when the map has no carpet layer. */
+  carpetMask: string | null;
+  zoneLines: FloorPlanZone[];
+  eraserZones: MapZone[];
 }
 
 export type Reachability = 'CHECKING' | 'ONLINE' | 'OFFLINE';
@@ -191,6 +198,7 @@ export interface DeviceSummary {
   duid: string;
   name: string;
   model: string | null;
+  modelName: string | null;
   paired: boolean;
   /** The server has never heard from this robot (and a probe did not find it): it still needs Add vacuum. */
   unpaired: boolean;

@@ -73,6 +73,7 @@ export interface RobotInfo {
   duid: string;
   name: string;
   model: string | null;
+  modelName: string | null;
   firmware: string | null;
   featureSet: string | null;
   newFeatureSet: string | null;
@@ -594,10 +595,9 @@ export class VacuumRepository extends EventEmitter {
           if (roomId !== null) mapping.set(segment, roomId);
         }
       }
-      if (mapping.size > 0) {
-        this.segmentToRoomId = mapping;
-        this.applyRoomNames();
-      }
+      if (mapping.size > 0) this.segmentToRoomId = mapping;
+      // Also for a table without room ids (S7-style rows): it still gives the tags and which rooms are listed.
+      this.applyRoomNames();
     }
     return resp;
   }
@@ -607,14 +607,22 @@ export class VacuumRepository extends EventEmitter {
     this.applyRoomNames();
   }
 
-  /** Real room names: map segment -> get_room_mapping room id -> home room name, else the parser's name. */
+  /**
+   * Real room names: map segment -> get_room_mapping room id -> home room name, else the parser's name;
+   * with the room's type tag and whether the robot's room table lists it (so it counts as named).
+   */
   private withRoomNames(map: ParsedMap): ParsedMap {
     let changed = false;
+    const table = this.rawSegmentTable;
     const rooms = map.rooms.map((r) => {
       const roomId = this.segmentToRoomId.get(r.id);
       const name = (roomId !== undefined ? this.homeRoomNames.get(roomId) : undefined) ?? this.parserNames.get(r.id) ?? r.name;
-      if (name !== r.name) changed = true;
-      return name === r.name ? r : { ...r, name };
+      const tag = table?.find((e) => e.segment === r.id)?.tagId ?? null;
+      // The segment mapping outlives the raw table, which is cleared on a floor switch or map save.
+      const inRoomTable = roomId !== undefined || (table?.some((e) => e.segment === r.id) ?? false);
+      if (name === r.name && tag === (r.tag ?? null) && inRoomTable === (r.inRoomTable ?? false)) return r;
+      changed = true;
+      return { ...r, name, tag, inRoomTable };
     });
     return changed ? { ...map, rooms } : map;
   }
