@@ -15,7 +15,7 @@ import { asInt, isObject, type V1Response } from '../protocol/envelope.js';
 import { createSecurityData } from '../protocol/mapResponse.js';
 import { parseAnyMap } from '../map/parse.js';
 import type { MqttLink } from '../net/mqttLink.js';
-import type { Room } from '../net/serverApi.js';
+import type { FirmwareUpdateInfo, LastKnownRaw, Room } from '../net/serverApi.js';
 import { log } from '../log.js';
 import { Aborted, Mutex, answerInt, firstInt, firstObject, intField, sleep } from '../util.js';
 import * as C from './commands.js';
@@ -70,6 +70,11 @@ export interface RepositoryDeps {
   rriotKey: () => string;
   cleanOrder: (mapFlag: number) => number[];
 }
+const FIRMWARE_POLL_MS = 3_000;
+const FIRMWARE_CONFIRM_TRIES = 6;
+const FIRMWARE_START_LIMIT_MS = 2 * 60_000;
+const FIRMWARE_WATCH_LIMIT_MS = 25 * 60_000;
+
 /** How long a robot may stay silent after it is opened before the server's last-known state is fetched. */
 const LAST_KNOWN_AFTER_MS = 10_000;
 
@@ -1032,6 +1037,117 @@ export class VacuumRepository extends EventEmitter {
 
   async resetMatter(): Promise<void> {
     C.requireOk(await C.resetMatter(this.deps.session), 'matter.reset');
+  }
+
+  // ---- Firmware (local_roborock_server #255) -------------------------------------------------
+
+  async checkFirmware(): Promise<void> {
+    const api = this.deps.firmware;
+    if (!api) return;
+    this.firmwareCheck = { kind: 'checking' };
+    this.changed();
+    try {
+      const info = await api.check();
+      this.firmwareCheck = !info ? { kind: 'unavailable', reason: 'No firmware info returned' }
+        : info.updatable ? { kind: 'available', current: info.currentVersion ?? this.info.firmware, latest: info.version, notes: info.desc, force: info.forceUpdate }
+          : { kind: 'upToDate', current: info.currentVersion ?? this.info.firmware };
+    } catch (e) {
+      this.firmwareCheck = { kind: 'unavailable', reason: describeException(e) };
+    }
+    this.changed();
+  }
+
+  private setFirmwareProgress(p: FirmwareProgress): void {
+    this.firmwareProgress = p;
+    this.changed();
+  }
+
+  /** Asks the server to install, then follows the robot's OTA state until it is done (runs on in the background). */
+  async startFirmwareUpdate(): Promise<void> {
+    const api = this.deps.firmware;
+    if (!api) throw new UserError('Firmware updates are not available');
+    if (this.firmwareWatching) throw new UserError('An update is already running');
+    const s = this.status;
+    const blocker = firmwareInstallBlocker(s.state, s.battery, s.chargeStatus, s.inCleaning, s.errorCode);
+    if (blocker) throw new UserError(blocker);
+    const before = this.firmwareCheck?.kind === 'available' ? this.firmwareCheck.current : this.info.firmware;
+    this.setFirmwareProgress({ kind: 'starting' });
+    let started;
+    try {
+      started = await api.start();
+    } catch (e) {
+      this.setFirmwareProgress({ kind: 'failed', reason: describeException(e) });
+      return;
+    }
+    if (!started.started) {
+      this.setFirmwareProgress({ kind: 'failed', reason: started.reason ?? 'The server did not start the update' });
+      return;
+    }
+    void this.followFirmware(started.version, before, false);
+  }
+
+  /** Picks the watch back up when the page opens while the robot is already downloading or installing. */
+  async resumeFirmwareWatch(): Promise<void> {
+    if (this.firmwareWatching) return;
+    let state: string | null = null;
+    let percent: number | null = null;
+    try {
+      state = C.parseOtaState(C.requireOk(await C.getOtaState(this.deps.session), 'get_ota_state').result);
+      if (state === 'downloading') percent = C.parseOtaProgress(C.requireOk(await C.getOtaProgress(this.deps.session), 'get_ota_progress').result);
+    } catch { /* not answering: nothing to resume */ }
+    const step = nextFirmwareStep({ kind: 'idle' }, false, state !== null, state, percent);
+    if (!step.seenWorking) return;
+    this.setFirmwareProgress(step.progress);
+    let before = this.info.firmware;
+    try { before = (await this.deps.firmware?.check())?.currentVersion ?? before; } catch { /* keep the server's record */ }
+    void this.followFirmware(null, before, true);
+  }
+
+  private async followFirmware(target: string | null, before: string | null, startedWorking: boolean): Promise<void> {
+    this.firmwareWatching = true;
+    try {
+      const t0 = Date.now();
+      let seenWorking = startedWorking;
+      let idleStreak = 0;
+      while (Date.now() - t0 < FIRMWARE_WATCH_LIMIT_MS) {
+        await sleep(FIRMWARE_POLL_MS);
+        let ota: string | null = null;
+        let answered = true;
+        try { ota = C.parseOtaState(C.requireOk(await C.getOtaState(this.deps.session, 5_000), 'get_ota_state').result); } catch { answered = false; }
+        let percent: number | null = null;
+        if (answered) { try { percent = C.parseOtaProgress(C.requireOk(await C.getOtaProgress(this.deps.session), 'get_ota_progress').result); } catch { /* none */ } }
+        const step = nextFirmwareStep(this.firmwareProgress, seenWorking, answered, ota, percent, idleStreak);
+        seenWorking = step.seenWorking;
+        idleStreak = step.idleStreak;
+        this.setFirmwareProgress(step.progress);
+        if (step.finished) {
+          if (step.progress.kind === 'failed') return;
+          this.setFirmwareProgress(await this.confirmFirmwareVersion(before, target));
+          await this.checkFirmware();
+          return;
+        }
+        if (!seenWorking && Date.now() - t0 > FIRMWARE_START_LIMIT_MS) {
+          this.setFirmwareProgress({ kind: 'failed', reason: 'The robot did not start the update.' });
+          return;
+        }
+      }
+      this.setFirmwareProgress({ kind: 'failed', reason: 'The update is taking longer than expected. Check the robot and try again.' });
+    } finally {
+      this.firmwareWatching = false;
+    }
+  }
+
+  // The server's version can lag the robot's reboot by a few polls, so ask again before calling it a failure.
+  private async confirmFirmwareVersion(before: string | null, target: string | null): Promise<FirmwareProgress> {
+    let outcome = firmwareOutcome(before, target, null);
+    for (let attempt = 0; attempt < FIRMWARE_CONFIRM_TRIES; attempt++) {
+      if (attempt > 0) await sleep(FIRMWARE_POLL_MS);
+      let after: string | null = null;
+      try { after = (await this.deps.firmware?.check())?.currentVersion ?? null; } catch { /* try again */ }
+      outcome = firmwareOutcome(before, target, after);
+      if (outcome.kind === 'done') return outcome;
+    }
+    return outcome;
   }
 
   async fetchValley(): Promise<void> {

@@ -276,8 +276,70 @@ export function RobotSettingsTab({ snap, rooms, actions }: { snap: VacuumSnapsho
             <dt>Firmware</dt><dd>{snap.firmware ?? 'Unknown'}</dd>
             <dt>Device ID</dt><dd className="mono">{snap.duid}</dd>
           </dl>
+          <FirmwarePanel snap={snap} actions={actions} />
         </Panel>
       </div>
+    </div>
+  );
+}
+
+/** The update check and install, from LocalRock's FirmwareUpdateScreen. The server follows the install, so a reload keeps it. */
+function FirmwarePanel({ snap, actions }: { snap: VacuumSnapshot; actions: Actions }) {
+  const [confirm, setConfirm] = useState(false);
+  const check = snap.firmwareCheck;
+  const progress = snap.firmwareProgress;
+  const running = firmwareRunning(progress);
+  const s = snap.status;
+  const blocker = firmwareInstallBlocker(s.state, s.battery, s.chargeStatus, s.inCleaning, s.errorCode);
+  return (
+    <div className="col" style={{ marginTop: 12 }}>
+      {check === null ? (
+        <div className="row">
+          <span className="grow muted small">Your server asks Roborock's cloud for new firmware on the robot's behalf, so the robot stays off it.</span>
+          <button type="button" className="btn secondary sm" onClick={() => void actions.read('checkFirmware')}><Icon name="refresh" />Check for update</button>
+        </div>
+      ) : check.kind === 'checking' ? (
+        <div className="row"><Spinner /><span>Checking for updates...</span></div>
+      ) : check.kind === 'unavailable' ? (
+        <div className="col tight">
+          <strong>The update check is not available.</strong>
+          <span className="error-text small">{check.reason}</span>
+          <span className="muted small">It needs local_roborock_server with firmware support (#255).</span>
+        </div>
+      ) : check.kind === 'upToDate' ? (
+        <div className="row"><Icon name="checkCircle" /><span>Up to date{check.current ? ` (${check.current})` : ''}.</span></div>
+      ) : (
+        <div className="col tight">
+          <strong>{check.force ? 'Update required' : 'Update available'}: {check.latest ?? 'new version'}</strong>
+          <span className="muted small">Installed: {check.current ?? snap.firmware ?? 'unknown'}</span>
+          {check.notes && <p className="small" style={{ whiteSpace: 'pre-wrap' }}>{check.notes}</p>}
+        </div>
+      )}
+      {progress.kind !== 'idle' && (
+        <div className={`callout ${progress.kind === 'failed' ? 'error' : 'primary'} col`} style={{ alignItems: 'stretch' }} role="status">
+          <span>{firmwareProgressText(progress)}</span>
+          {progress.kind === 'downloading' && progress.percent !== null && <span className="progress"><span style={{ width: `${progress.percent}%`, background: 'var(--primary)' }} /></span>}
+        </div>
+      )}
+      {check?.kind === 'available' && !running && (
+        <>
+          <p className="muted small">The update is downloaded from your server and installed by the robot. It needs the robot on its dock with at least {FIRMWARE_MIN_BATTERY}% battery, and it restarts when it is done.</p>
+          {blocker && <span className="error-text small">{blocker}</span>}
+          <button type="button" className="btn" disabled={blocker !== null || actions.busy} onClick={() => setConfirm(true)}>Update now</button>
+        </>
+      )}
+      {check !== null && check.kind !== 'checking' && !running && (
+        <button type="button" className="btn secondary sm" onClick={() => void actions.read('checkFirmware')}>Check again</button>
+      )}
+      {confirm && (
+        <ConfirmDialog
+          title="Update the firmware?"
+          text="The robot will download the update, install it and restart. It is unavailable for a few minutes. Keep it on its dock and do not turn it off."
+          confirm="Update"
+          onConfirm={() => void actions.run('startFirmwareUpdate')}
+          onClose={() => setConfirm(false)}
+        />
+      )}
     </div>
   );
 }

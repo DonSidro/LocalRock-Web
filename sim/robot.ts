@@ -203,6 +203,8 @@ export class SimRobot {
         this.setState(32);
         setTimeout(() => this.setState(8), 6_000);
         return respond(ok);
+      case 'get_ota_state': return respond({ result: [{ ota_state: this.ota.state }] });
+      case 'get_ota_progress': return respond({ result: [{ ota_progress: this.ota.progress }] });
       case 'app_get_init_status':
         return respond({ result: [{ local_info: {}, feature_info: [111, 112], new_feature_info: 2 ** 25 + 2 ** 30 + 2 ** 3, new_feature_info_str: this.config.robotNewFeatureSet ?? this.config.newFeatureSet }] });
       // FlexiArm side brush (bit 54): answers [{"status": n}] and takes the wrapped object.

@@ -3,6 +3,8 @@ import { isIP } from 'node:net';
 import type { Rriot } from '../protocol/mqttCreds.js';
 import { hawkAuthorizationHeader, isHawkPublicPath, newHawkNonce, type HawkCreds } from '../protocol/hawk.js';
 import { UserError } from '../vacuum/errors.js';
+import type { Routine } from '../../shared/api.js';
+import { firmwareStartRefusal } from '../../shared/firmware.js';
 
 /*
  * HTTPS calls to local_roborock_server, ported from LocalRock's LoginApi.kt, DeviceApi.kt,
@@ -162,6 +164,19 @@ export interface LastKnownRaw {
   rooms?: Array<{ segment?: number; iot_id?: string; tag?: number | null; name?: string | null }>;
 }
 
+export interface FirmwareUpdateInfo {
+  /** Latest available version. */
+  version: string | null;
+  /** Version installed on the robot, per the cloud. */
+  currentVersion: string | null;
+  /** True when version is newer than currentVersion and can be applied. */
+  updatable: boolean;
+  /** Release notes. */
+  desc: string | null;
+  /** Mandatory update the robot applies regardless. */
+  forceUpdate: boolean;
+}
+
 export interface SceneRunResult {
   accepted: boolean;
   status: string | null;
@@ -280,6 +295,31 @@ export class ServerApi {
   async lastKnown(duid: string, includeMap: boolean): Promise<LastKnownRaw> {
     const raw = await this.call('GET', `/user/devices/${encodeURIComponent(duid)}/last_known`, { query: includeMap ? { map: '1' } : {} });
     return apiData<LastKnownRaw>(raw, 'Last known state') ?? { known: false };
+  }
+
+  /** The update check (local_roborock_server #255): the server asks Roborock's cloud on the robot's behalf. */
+  async checkFirmwareUpdate(duid: string): Promise<FirmwareUpdateInfo | null> {
+    const raw = await this.call('GET', `/ota/firmware/${encodeURIComponent(duid)}/updatev2`, { query: { lang: 'en' }, headers: { Accept: 'application/json' } });
+    if (raw.status < 200 || raw.status >= 300) throw new ApiError(raw.status, `Firmware check unavailable (HTTP ${raw.status})`);
+    const r = parseJson(raw, 'Firmware check')['result'];
+    if (typeof r !== 'object' || r === null) return null;
+    const o = r as Record<string, unknown>;
+    const text = (k: string) => (typeof o[k] === 'string' && (o[k] as string).trim() ? o[k] as string : null);
+    return { version: text('version'), currentVersion: text('currentVersion'), updatable: o['updatable'] === true, desc: text('desc'), forceUpdate: o['forceUpdate'] === true };
+  }
+
+  /** The Update button: asks the server to install the version the cloud offers. */
+  async startFirmwareUpdate(duid: string): Promise<{ started: boolean; version: string | null; reason: string | null }> {
+    const raw = await this.call('POST', `/ota/device/${encodeURIComponent(duid)}/upgrade`, { headers: { Accept: 'application/json' } });
+    if (raw.status < 200 || raw.status >= 300) throw new ApiError(raw.status, firmwareStartRefusal(raw.status));
+    const root = parseJson(raw, 'Firmware update');
+    const data = (root['data'] ?? root['result']) as Record<string, unknown> | undefined;
+    const text = (k: string) => (data && data[k] !== undefined && data[k] !== null && String(data[k]).trim() ? String(data[k]) : null);
+    const started = data?.['started'] === true || data?.['started'] === 'true';
+    // The server answers its own refusals with HTTP 200 and the status in `code`; a body 404 names an unknown robot.
+    const code = typeof root['code'] === 'number' ? root['code'] : null;
+    const message = !started && code === 501 ? firmwareStartRefusal(501) : text('reason') ?? text('error') ?? (typeof root['msg'] === 'string' ? root['msg'] : null);
+    return { started, version: text('version'), reason: started ? null : message };
   }
 
   async createRoom(homeId: number, name: string): Promise<Room> {

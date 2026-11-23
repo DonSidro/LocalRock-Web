@@ -180,6 +180,24 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse): Promise<vo
     } });
   }
 
+  // Firmware (local_roborock_server #255): one update for the S8.
+  const otaCheck = path.match(/^\/ota\/firmware\/([^/]+)\/updatev2$/);
+  if (req.method === 'GET' && otaCheck) {
+    if (!hawkOk(req, path, query, null)) return json(res, 401, { code: 401, msg: 'hawk check failed', data: null });
+    const robot = robots.find((r) => r.config.duid === decodeURIComponent(otaCheck[1]!));
+    if (!robot) return json(res, 404, { code: 404, msg: 'unknown device' });
+    const latest = robot.config.duid === 'SimS8ProUltra01' ? '02.33.90' : robot.config.fv;
+    return json(res, 200, { code: 200, msg: 'success', result: { version: latest, currentVersion: robot.config.fv, updatable: latest !== robot.config.fv, desc: 'Improves obstacle avoidance.', forceUpdate: false } });
+  }
+  const otaStart = path.match(/^\/ota\/device\/([^/]+)\/upgrade$/);
+  if (req.method === 'POST' && otaStart) {
+    if (!hawkOk(req, path, query, null)) return json(res, 401, { code: 401, msg: 'hawk check failed', data: null });
+    const robot = robots.find((r) => r.config.duid === decodeURIComponent(otaStart[1]!));
+    if (!robot) return json(res, 200, { code: 404, msg: 'unknown device', data: { started: false } });
+    robot.startOta('02.33.90');
+    return json(res, 200, { code: 200, msg: 'success', data: { started: true, version: '02.33.90' } });
+  }
+
   // Routines ("scenes"), as local_roborock_server keeps them; the run only tracks which one is going.
   const sceneList = path.match(/^\/user\/scene\/device\/([^/]+)$/);
   if (req.method === 'GET' && sceneList) {

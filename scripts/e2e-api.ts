@@ -164,6 +164,17 @@ async function main() {
   check((await call(S8, 'setFeature', { id: 'optimize_battery', value: 1 })).ok && (await until('battery', () => featureVal('optimize_battery') === 1)) !== null, 'smart charging on (bare value)');
   check((await call(S8, 'setFeature', { id: 'gap_deep_clean', value: 1 })).ok === false, 'an option the robot does not offer is refused');
 
+  // Firmware (server #255): check, install, follow to the new version
+  check((await call(S8, 'checkFirmware')).ok && snapshots.get(S8)?.firmwareCheck?.kind === 'available', `firmware update found (${JSON.stringify(snapshots.get(S8)?.firmwareCheck)})`);
+  const fw = await call(S8, 'startFirmwareUpdate');
+  check(fw.ok, `firmware install started (${fw.error ?? 'ok'})`);
+  const fwDone = await until('firmware', () => {
+    const p = snapshots.get(S8)?.firmwareProgress;
+    return p && (p.kind === 'done' || p.kind === 'failed') ? p : null;
+  }, 90_000);
+  check(fwDone?.kind === 'done' && fwDone.version === '02.33.90', `firmware installed and confirmed (${JSON.stringify(fwDone)})`);
+  check(snapshots.get(S8)?.firmwareCheck?.kind === 'upToDate', 'up to date afterwards');
+
   // Dock settings
   const dockOf = () => snapshots.get(S8)!.dockSettings;
   const dock = dockOf();
