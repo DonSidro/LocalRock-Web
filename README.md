@@ -59,7 +59,30 @@ Everything the app does, laid out for a desktop browser:
   browser notifications
 - Add vacuum (Wi-Fi pairing through the server's admin API)
 - Light, dark and system theme
+- Dock settings offered per model: wash mode, mop wash frequency (by time, by room, smart), auto-empty
+  mode, mop drying and drying time, washing water temperature, the off-peak electricity window and
+  emptying the robot's built-in water tank through the dock
+- Robot options the robot advertises (FlexiArm, collision avoidance, carpet boost and carpet options,
+  cleaning pattern, smart charging and more), read from the robot's own feature flags; vacuum then mop
+- Room types, routines kept by the server, map backup and restore, obstacles on the map with their
+  photos, Find my pet, Matter setup code, Voice Assistant (switch, language packs, chat history)
+- History the way the official app shows it: each run's map, result, tags and timeline, plus a Cruise
+  tab with each cruise point's photos
+- Firmware updates through the server; offline robots show when and where they were last seen, and a
+  robot the server never heard from shows as Not paired yet
 - Silent re-login when the server expires the session, MQTT reconnect with backoff
+
+### Features that need a newer server
+
+Some features rely on local_roborock_server changes that are not in a released version yet. Without
+them LocalRock Web still works; it leaves that part out.
+
+| Feature | Needs in local_roborock_server | Without it |
+| --- | --- | --- |
+| Last seen, Not paired yet | #251 | An unanswering robot shows as plain Offline |
+| Voice language packs | #261 | The Language window says voice packs are unavailable |
+| Matter on a locally paired robot | #252 | The robot can't get a Matter setup code |
+| Firmware check and install | #255, with the install option turned on | The check says it is not available |
 
 ## Differences from the app
 
@@ -114,6 +137,7 @@ If your server uses a certificate this computer does not trust (self-signed or f
 either point `LOCALROCK_CA_FILE` at the CA certificate (preferred), or turn on "Allow self-signed
 certificates" on the server address screen. The latter turns off certificate checking for the
 server's HTTPS and MQTT.
+
 ## Run with Docker Compose
 
 Run it on a computer on the same network as your local_roborock_server (a home server, NAS or
