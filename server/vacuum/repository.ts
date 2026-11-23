@@ -8,11 +8,27 @@ import { FloorMaterial, isRoundCarpet, type MapZone, type ParsedMap, type Virtua
 import { editBlockedReason, mapIndexBlocker, restrictionSaveBlocker, saveMapIndex } from '../../shared/mapEdit.js';
 import { restrictionsMatch, sameZones } from '../../shared/verification.js';
 import type {
-  CleanRecord, CleanSummary, CleanTimer, ConsumableStatus, DndSettings, DockSettings, FloorMap, RobotAlert,
-  RobotSettings, VacuumSnapshot,
+  CleanRecord, CleanSummary, CleanTimer, ConsumableStatus, DndSettings, DockSettings, FloorMap, LastKnown, ObstaclePhotoDto, PatrolThumbnailDto, RobotAlert, VoiceSnapshot,
+  RobotSettings, ValleySettings, VacuumSnapshot,
 } from '../../shared/api.js';
-import { asInt, isObject, type V1Response } from '../protocol/envelope.js';
+import { withWashFrequency } from '../../shared/dock.js';
+import { buildTimeline, parseTimelinePage, type CleanTimelineEvent, type CleanTimelineStep } from '../../shared/history.js';
+import {
+  installSoundParams, nextVoiceIdlePolls, parseCurrentSound, parseCurrentSoundLanguage, parseSoundProgress, parseVoiceHistory,
+  parseVoiceHistorySummary, parseVoicePackList, parseVoiceSwitch, voiceHistoryWindows, voiceInstallStep, voiceSwitchParams,
+  type VoiceInstallState, type VoiceMessage, type VoicePack,
+} from '../../shared/voice.js';
+import { firmwareInstallBlocker, firmwareOutcome, nextFirmwareStep, type FirmwareCheck, type FirmwareProgress } from '../../shared/firmware.js';
+import { matterKeyRequestAllowed, parseMatterStatus, type MatterInfo } from '../../shared/matter.js';
+import {
+  BETA_SHAPE_REFUSAL_CODES, betaSetTryOrder, featureDef, featureReadOrder, featureSetFromInitStatus, featureSetParamCandidates,
+  featureToggleable, newFeatureInfoFromInitStatus, parseFeatureReply, supportedFeatures, unlistedAdvertisedFeatures, withoutReplaced,
+  type FeatureDef, type FeatureState,
+} from '../../shared/features.js';
+import type { JsonValue } from '../protocol/json.js';
+import { asInt, errorCode, isObject, type V1Response } from '../protocol/envelope.js';
 import { createSecurityData } from '../protocol/mapResponse.js';
+import { imageMime, obstaclePhotoFromData, parsePatrolThumbnails } from '../protocol/blob.js';
 import { parseAnyMap } from '../map/parse.js';
 import type { MqttLink } from '../net/mqttLink.js';
 import type { FirmwareUpdateInfo, LastKnownRaw, Room } from '../net/serverApi.js';
@@ -416,6 +432,19 @@ export class VacuumRepository extends EventEmitter {
     const flags = this.effectiveNewFeatureSet();
     return {
       ...this.info,
+      newFeatureSet: flags,
+      featureSet: this.robotNewFeatureInfo ?? this.info.featureSet,
+      lastKnown: this.lastKnown,
+      firmwareCheck: this.firmwareCheck,
+      voice: this.voice,
+      voiceInstall: this.voiceInstall,
+      firmwareProgress: this.firmwareProgress,
+      offlineMap: this.parsedMap === null && this.offlineMap !== null,
+      supportsSmartPlan: isSmartPlanSupported(flags),
+      supportsWaterSlide: isWaterSlideSupported(flags),
+      features: this.features.map((f) => ({ id: f.id, value: f.value })),
+      featuresLoading: this.featuresLoading,
+      unlistedFeatures: unlistedAdvertisedFeatures(flags),
       status: { ...this.status },
       mopMode: this.mopMode,
       mapStatus: this.mapStatusText,
@@ -831,10 +860,10 @@ export class VacuumRepository extends EventEmitter {
     let ids: number[] = [];
     if (Array.isArray(result)) {
       if (result.length < 3) return [];
-      this.cleanSummary = { totalTimeSec: num(result[0]), totalAreaMm2: num(result[1]), totalCount: num(result[2]) };
+      this.cleanSummary = { totalTimeSec: num(result[0]), totalAreaMm2: num(result[1]), totalCount: num(result[2]), patrolCount: 0 };
       if (Array.isArray(result[3])) ids = result[3].map((v: unknown) => asInt(v)).filter((v): v is number => v !== null);
     } else if (isObject(result)) {
-      this.cleanSummary = { totalTimeSec: num(result['clean_time']), totalAreaMm2: num(result['clean_area']), totalCount: num(result['clean_count']) };
+      this.cleanSummary = { totalTimeSec: num(result['clean_time']), totalAreaMm2: num(result['clean_area']), totalCount: num(result['clean_count']), patrolCount: num(result['patrol_count']) };
       if (Array.isArray(result['records'])) ids = result['records'].map((v: unknown) => asInt(v)).filter((v): v is number => v !== null);
     }
     this.changed();
@@ -854,6 +883,62 @@ export class VacuumRepository extends EventEmitter {
     }
     this.cleanHistory = records;
     this.changed();
+  }
+
+  /** A past run's map, read B01 first then legacy, like the live one. */
+  fetchCleanRecordMap(beginEpoch: number): Promise<ParsedMap> {
+    return this.mapFetchMutex.run(async () => {
+      const resp = await this.deps.session.fetchCleanRecordMap(createSecurityData(this.deps.rriotKey()), beginEpoch);
+      const map = parseAnyMap(resp.data).map;
+      if (!map) throw new MapEditError("The robot sent a map this app can't read");
+      return map;
+    });
+  }
+
+  /** The steps of one run, or null when the robot has no timeline (older models answer "not recognized"). */
+  async fetchCleanTimeline(beginEpoch: number, endEpoch: number): Promise<CleanTimelineStep[] | null> {
+    const events: CleanTimelineEvent[] = [];
+    let from = 0;
+    for (let page = 0; page < 20; page++) {
+      let resp: V1Response;
+      try { resp = await C.getCleanDetail(this.deps.session, beginEpoch, from); } catch { return null; }
+      if (resp.error) return null;
+      const p = parseTimelinePage(resp.result);
+      if (!p) return null;
+      events.push(...p.events);
+      if (!p.more || p.num <= 0) return events.length ? buildTimeline(events, endEpoch) : null;
+      from = p.from + p.num;
+    }
+    return events.length ? buildTimeline(events) : null;
+  }
+
+  private readonly photoMutex = new Mutex();
+  private readonly obstaclePhotos = new Map<string, ObstaclePhotoDto>();
+  private readonly patrolThumbs = new Map<string, PatrolThumbnailDto[]>();
+
+  /** The photo the robot keeps for an obstacle, fetched once per photo id. */
+  fetchObstaclePhoto(photoId: string): Promise<ObstaclePhotoDto> {
+    return this.photoMutex.run(async () => {
+      const cached = this.obstaclePhotos.get(photoId);
+      if (cached) return cached;
+      const { image, box } = obstaclePhotoFromData(await this.deps.session.fetchPhoto(createSecurityData(this.deps.rriotKey()), photoId));
+      const dto = { dataUrl: `data:${imageMime(image)};base64,${image.toString('base64')}`, box };
+      this.obstaclePhotos.set(photoId, dto);
+      return dto;
+    });
+  }
+
+  /** The thumbnails the robot took at one cruise point of a run, fetched once per point. */
+  fetchPatrolThumbnails(taskId: number, x: number, y: number): Promise<PatrolThumbnailDto[]> {
+    return this.photoMutex.run(async () => {
+      const key = `${taskId}:${x}:${y}`;
+      const cached = this.patrolThumbs.get(key);
+      if (cached) return cached;
+      const data = await this.deps.session.fetchPatrolPhotoData(createSecurityData(this.deps.rriotKey()), taskId, x, y);
+      const thumbs = parsePatrolThumbnails(data).map((t) => ({ x: t.x, y: t.y, width: t.width, height: t.height, angle: t.angle, dataUrl: `data:${imageMime(t.png) ?? 'image/png'};base64,${t.png.toString('base64')}` }));
+      this.patrolThumbs.set(key, thumbs);
+      return thumbs;
+    });
   }
 
   async fetchTimers(): Promise<void> {
@@ -1773,9 +1858,11 @@ export function applyDpsPush(s: VacuumStatus, push: Map<number, unknown>): Vacuu
 export function parseCleanRecord(result: unknown, recordId: number): CleanRecord | null {
   const element = Array.isArray(result) ? result[0] : result;
   if (element === undefined || element === null) return null;
+  const base = { startType: 0, cleanType: 0, finishReason: 0, dustCollected: false, washCount: 0, cleanedAreaMm2: null };
   if (Array.isArray(element)) {
     if (element.length < 6) return null;
     return {
+      ...base,
       beginEpoch: asInt(element[0]) ?? recordId,
       endEpoch: asInt(element[1]) ?? 0,
       durationSeconds: asInt(element[2]) ?? 0,
@@ -1792,6 +1879,12 @@ export function parseCleanRecord(result: unknown, recordId: number): CleanRecord
       areaMm2: asInt(element['area']) ?? 0,
       errorCode: asInt(element['error']) ?? 0,
       complete: asInt(element['complete']) ?? 0,
+      startType: asInt(element['start_type']) ?? 0,
+      cleanType: asInt(element['clean_type']) ?? 0,
+      finishReason: asInt(element['finish_reason']) ?? 0,
+      dustCollected: asInt(element['dust_collection_status']) === 1,
+      washCount: asInt(element['wash_count']) ?? 0,
+      cleanedAreaMm2: asInt(element['cleaned_area']),
     };
   }
   return null

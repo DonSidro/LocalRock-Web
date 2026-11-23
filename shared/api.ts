@@ -1,4 +1,9 @@
 import type { RoomCleanMode, VacuumStatus } from './codes.js';
+import type { SmartWashSettings } from './dock.js';
+import type { AdvertisedFeature } from './features.js';
+import type { MapObstacle, PatrolPoint } from './obstacles.js';
+import type { FirmwareCheck, FirmwareProgress } from './firmware.js';
+import type { VoiceInstallState } from './voice.js';
 import type { MapPoint, MapRoom, MapZone, VirtualWall } from './map.js';
 
 /* Data exchanged between the server and the browser. */
@@ -25,12 +30,23 @@ export interface CleanRecord {
   areaMm2: number;
   errorCode: number;
   complete: number;
+  /** What started the run (see startTypeLabel); 0 when the robot did not say. */
+  startType: number;
+  /** 1 full clean; 5, 6 and 10 are camera runs (Cruise, pet search). */
+  cleanType: number;
+  finishReason: number;
+  dustCollected: boolean;
+  washCount: number;
+  /** The area the official app shows, when the robot reports it. */
+  cleanedAreaMm2: number | null;
 }
 
 export interface CleanSummary {
   totalTimeSec: number;
   totalAreaMm2: number;
   totalCount: number;
+  /** Cruise and pet-search runs. */
+  patrolCount: number;
 }
 
 export interface CleanTimer {
@@ -110,6 +126,24 @@ export interface VacuumSnapshot {
   timers: CleanTimer[];
   robotSettings: RobotSettings;
   dockSettings: DockSettings;
+  /** Null until read, or on a robot without off-peak charging. */
+  valley: ValleySettings | null;
+  /** Segment -> room type tag from the robot's room table (see ROOM_TYPES). */
+  roomTags: Record<number, number>;
+  /** What the server last heard from the robot; only set while the robot is not answering. */
+  lastKnown: LastKnown | null;
+  voice: VoiceSnapshot;
+  voiceInstall: VoiceInstallState | null;
+  /** Null until checked. */
+  firmwareCheck: FirmwareCheck | null;
+  firmwareProgress: FirmwareProgress;
+  /** The map shown is the last one the server kept, not a live one. */
+  offlineMap: boolean;
+  /** Robot options that answered (see FEATURE_DEFS), in the table's order. */
+  features: Array<{ id: string; value: number | null }>;
+  featuresLoading: boolean;
+  /** newFeatureSet bits the robot advertises that have no control here. */
+  unlistedFeatures: AdvertisedFeature[];
   dnd: DndSettings | null;
   /** Default cleaning order for the loaded map (kept on the server, like the app keeps it). */
   defaultCleanOrder: number[];
@@ -140,6 +174,9 @@ export interface MapDto {
   carpetAreas: MapZone[];
   carpetFlagsPresent: boolean;
   thresholds: MapZone[];
+  obstacles: MapObstacle[];
+  patrolPoints: PatrolPoint[];
+  patrolTaskId: number | null;
 }
 
 export type Reachability = 'CHECKING' | 'ONLINE' | 'OFFLINE';
@@ -190,6 +227,15 @@ export type ServerMessage =
 
 /** Browser -> server over the WebSocket. */
 export type ClientMessage = { t: 'watch'; duid: string } | { t: 'unwatch'; duid: string };
+
+/** An obstacle photo for the page, and where the robot boxed the obstacle in it (image pixels). */
+export interface ObstaclePhotoDto {
+  dataUrl: string;
+  box: { left: number; top: number; right: number; bottom: number } | null;
+}
+
+/** One cruise-point thumbnail. */
+export interface PatrolThumbnailDto { x: number; y: number; width: number; height: number; angle: number; dataUrl: string }
 
 /** What the Voice Assistant page shows; null where the robot did not answer. */
 export interface VoiceSnapshot {

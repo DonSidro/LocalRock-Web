@@ -886,3 +886,11 @@ kbd {
   .robot-grid { grid-template-columns: minmax(0, 1fr); }
   .facts { grid-template-columns: 110px 1fr; }
 }
+
+/* History: clickable runs and a run's timeline */
+.table tr.clickable { cursor: pointer; }
+.table tr.clickable:hover td, .table tr.clickable:focus-visible td { background: color-mix(in srgb, var(--primary) 8%, transparent); }
+.timeline { list-style: none; margin: 0; padding: 0 0 0 14px; border-left: 2px solid var(--outline-variant, rgba(127,127,127,.3)); display: flex; flex-direction: column; gap: 10px; }
+.timeline li { position: relative; display: flex; flex-direction: column; gap: 1px; }
+.timeline li::before { content: ''; position: absolute; left: -20px; top: 5px; width: 10px; height: 10px; border-radius: 50%; background: var(--primary); }
+.timeline li.bad::before { background: var(--error); }

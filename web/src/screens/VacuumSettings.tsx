@@ -1,10 +1,26 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { CONSUMABLE_LIFETIME_S } from '../../../shared/codes';
-import type { VacuumSnapshot } from '../../../shared/api';
+import { CONSUMABLE_LIFETIME_RUNS, CONSUMABLE_LIFETIME_S, describeError, isDockedAndIdle, percentLeft } from '../../../shared/codes';
+import { DockCapabilities, WASH_WATER_TEMPERATURES, dryTimeLabel, labelFor, washFrequencyLabel } from '../../../shared/dock';
+import { choiceLabelFor, featureDef, featureEnabled, type FeatureSection } from '../../../shared/features';
+import type { CleanRecord, MapDto, VacuumSnapshot } from '../../../shared/api';
+import type { ParsedMap } from '../../../shared/map';
+import {
+  cleanAreaLabel, cleanDurationLabel, cleanRecordTags, cleanTypeLabel, cruiseTitle, finishReasonLabel, isCruise, shownAreaMm2,
+  startTypeLabel, timelineDetail, timelineTitle, totalAreaLabel, type CleanTimelineStep,
+} from '../../../shared/history';
+import { call } from '../api';
+import { MapView } from '../map/MapView';
+import { PatrolPointList, drawPatrolPoints } from './Obstacles';
+import { decodeMap, useStore } from '../store';
 import type { MapRoom } from '../../../shared/map';
 import { Icon, type IconName } from '../icons';
 import { ConfirmDialog, Empty, IconButton, Modal, Panel, Segmented, Select, SettingRow, Spinner, Switch } from '../ui';
 import { useRobotActions } from '../useRobot';
+import { MatterDialog } from './Matter';
+import { VoicePanel } from './Voice';
+import { isVoiceAssistantSupported } from '../../../shared/voice';
+import { isMatterSupported } from '../../../shared/matter';
+import { FIRMWARE_MIN_BATTERY, firmwareInstallBlocker, firmwareProgressText, firmwareRunning } from '../../../shared/firmware';
 
 /* The History, Maintenance and Settings tabs of a robot's workspace. */
 
@@ -14,51 +30,59 @@ type Actions = ReturnType<typeof useRobotActions>;
 
 export function HistoryTab({ snap, actions }: { snap: VacuumSnapshot; actions: Actions }) {
   const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState<'clean' | 'cruise'>('clean');
+  const [open, setOpen] = useState<CleanRecord | null>(null);
   const load = async () => {
     setLoading(true);
     await actions.run('fetchHistory');
     setLoading(false);
   };
   useEffect(() => { void load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  const records = [...snap.cleanHistory].sort((a, b) => b.beginEpoch - a.beginEpoch);
+  const all = [...snap.cleanHistory].sort((a, b) => b.beginEpoch - a.beginEpoch);
   const summary = snap.cleanSummary;
+  // Cleaning and Cruise tabs only when the robot has cruise runs, as the official app does.
+  const hasCruise = (summary?.patrolCount ?? 0) > 0 || all.some(isCruise);
+  const records = hasCruise && tab === 'cruise' ? all.filter(isCruise) : all.filter((r) => !isCruise(r));
   return (
     <div className="tab-page">
       <div className="tab-page-head">
-        <h2 className="grow">Cleaning history</h2>
+        <h2 className="grow">History</h2>
         <button type="button" className="btn secondary sm" disabled={loading} onClick={() => void load()}>{loading ? <span className="spinner" /> : <Icon name="refresh" />}Refresh</button>
       </div>
       {summary && (
         <div className="stat-tiles">
-          <div className="stat-tile"><span className="stat-label">Sessions</span><span className="stat-big">{summary.totalCount}</span></div>
-          <div className="stat-tile"><span className="stat-label">Total area</span><span className="stat-big">{Math.round(summary.totalAreaMm2 / 1_000_000)} m²</span></div>
-          <div className="stat-tile"><span className="stat-label">Total time</span><span className="stat-big">{hm(summary.totalTimeSec)}</span></div>
+          <div className="stat-tile"><span className="stat-label">Total Area</span><span className="stat-big">{totalAreaLabel(summary.totalAreaMm2)}</span></div>
+          <div className="stat-tile"><span className="stat-label">Total Time</span><span className="stat-big">{hm(summary.totalTimeSec)}</span></div>
+          <div className="stat-tile"><span className="stat-label">Working Times</span><span className="stat-big">{summary.totalCount}</span></div>
         </div>
       )}
+      {hasCruise && <Segmented label="History" options={[['clean', 'Cleaning'], ['cruise', 'Cruise']] as Array<['clean' | 'cruise', string]>} value={tab} onChange={setTab} />}
       {records.length === 0 ? (
         loading ? <div className="empty"><Spinner big /></div> : (
-          <Empty icon="history" title="No history yet" text="Complete a cleaning session to see it here.">
+          <Empty icon="history" title="No history yet" text={tab === 'cruise' ? 'Cruise and pet searches show up here.' : 'Complete a cleaning session to see it here.'}>
             <button type="button" className="btn secondary" onClick={() => void load()}>Load history</button>
           </Empty>
         )
       ) : (
         <Panel>
-          <table className="table">
+          <table className="table hover">
             <thead>
-              <tr><th>Started</th><th className="num">Duration</th><th className="num">Area</th><th>Result</th></tr>
+              <tr><th>Started</th><th>{tab === 'cruise' ? 'Run' : 'Mode'}</th><th className="num">Duration</th><th className="num">Area</th><th>Result</th></tr>
             </thead>
             <tbody>
               {records.map((r) => {
-                const done = r.complete === 1;
+                const result = finishReasonLabel(r);
+                const done = result === 'Finished cleaning';
                 return (
-                  <tr key={r.beginEpoch}>
+                  <tr key={r.beginEpoch} className="clickable" tabIndex={0} onClick={() => setOpen(r)} onKeyDown={(e) => { if (e.key === 'Enter') setOpen(r); }}>
                     <td>{new Date(r.beginEpoch * 1000).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</td>
-                    <td className="num">{Math.floor(r.durationSeconds / 60)} min</td>
-                    <td className="num">{(r.areaMm2 / 1_000_000).toFixed(1)} m²</td>
+                    <td>{isCruise(r) ? cruiseTitle(r) : cleanTypeLabel(r.cleanType) ?? startTypeLabel(r.startType) ?? '—'}</td>
+                    <td className="num">{cleanDurationLabel(r.durationSeconds)}</td>
+                    <td className="num">{cleanAreaLabel(shownAreaMm2(r))}</td>
                     <td>
                       {done
-                        ? <span className="tag good"><Icon name="checkCircle" size={14} />Finished</span>
-                        : <span className="tag bad"><Icon name="warning" size={14} />{r.errorCode !== 0 ? `Error ${r.errorCode}` : 'Not finished'}</span>}
+                        ? <span className="tag good"><Icon name="checkCircle" size={14} />{result}</span>
+                        : <span className="tag bad"><Icon name="warning" size={14} />{r.errorCode !== 0 ? describeError(r.errorCode) : result}</span>}
                     </td>
                   </tr>
                 );
@@ -67,7 +91,72 @@ export function HistoryTab({ snap, actions }: { snap: VacuumSnapshot; actions: A
           </table>
         </Panel>
       )}
+      {open && <RunDialog duid={snap.duid} record={open} onClose={() => setOpen(null)} />}
     </div>
+  );
+}
+
+/** One run: its map (asked from the robot), the result, the tags and the timeline, as the official app's run page. */
+function RunDialog({ duid, record, onClose }: { duid: string; record: CleanRecord; onClose: () => void }) {
+  const [map, setMap] = useState<ParsedMap | null>(null);
+  const [mapState, setMapState] = useState<'loading' | 'ok' | 'none'>('loading');
+  const [timeline, setTimeline] = useState<CleanTimelineStep[] | null | undefined>(undefined);
+  const roomNames = useStore((s) => s.maps[duid]?.rooms);
+  useEffect(() => {
+    let live = true;
+    call<MapDto>(duid, 'fetchCleanRecordMap', { begin: record.beginEpoch })
+      .then((dto) => { if (live) { setMap(decodeMap(dto)); setMapState('ok'); } })
+      .catch(() => { if (live) setMapState('none'); });
+    call<CleanTimelineStep[] | null>(duid, 'fetchCleanTimeline', { begin: record.beginEpoch, end: record.endEpoch })
+      .then((t) => { if (live) setTimeline(t); })
+      .catch(() => { if (live) setTimeline(null); });
+    return () => { live = false; };
+  }, [duid, record.beginEpoch, record.endEpoch]);
+  const tags = cleanRecordTags(record);
+  const nameOf = (segment: number) => roomNames?.find((r) => r.id === segment)?.name ?? null;
+  // The run's map with the home's room names, which the live map carries.
+  const namedMap = useMemo(() => (map ? { ...map, rooms: map.rooms.map((r) => ({ ...r, name: roomNames?.find((x) => x.id === r.id)?.name ?? r.name })) } : null), [map, roomNames]);
+  const clock = (t: number) => new Date(t * 1000).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  return (
+    <Modal title={new Date(record.beginEpoch * 1000).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })} wide onClose={onClose}
+      footer={<button type="button" className="btn secondary" onClick={onClose}>Close</button>}>
+      <div className="col">
+        <div className="run-map" style={{ height: 300, position: 'relative', borderRadius: 12, overflow: 'hidden' }}>
+          {mapState === 'ok' && namedMap ? <MapView map={namedMap} showLabels overlayKey={namedMap.patrolPoints} overlay={({ ctx, api }) => drawPatrolPoints(ctx, api, namedMap.patrolPoints)} />
+            : mapState === 'loading' ? <div className="empty"><Spinner big /></div>
+              : <div className="empty"><span className="muted">The robot did not send this run's map.</span></div>}
+        </div>
+        <div className="col tight">
+          <strong>{isCruise(record) ? cruiseTitle(record) : finishReasonLabel(record)}</strong>
+          {tags.length > 0 && <div className="row" style={{ flexWrap: 'wrap', gap: 6 }}>{tags.map((t) => <span key={t} className="tag">{t}</span>)}</div>}
+          <span className="muted small">{cleanDurationLabel(record.durationSeconds)} · {cleanAreaLabel(shownAreaMm2(record))}{record.errorCode !== 0 ? ` · ${describeError(record.errorCode)}` : ''}</span>
+        </div>
+        {isCruise(record) && (
+          <div className="col tight">
+            <strong>Cruise points</strong>
+            {mapState === 'loading' ? <span className="muted small">Reading the run's map...</span>
+              : map && map.patrolTaskId !== null ? <PatrolPointList duid={duid} taskId={map.patrolTaskId} points={map.patrolPoints} />
+                : <span className="muted small">This run has no cruise points, as with a pet search.</span>}
+          </div>
+        )}
+        <div className="col tight">
+          <strong>Timeline</strong>
+          {timeline === undefined ? <div className="row"><Spinner /><span>Reading the timeline...</span></div>
+            : timeline === null || timeline.length === 0 ? <span className="muted small">No timeline for this run.</span>
+              : (
+                <ol className="timeline">
+                  {timeline.map((s, i) => (
+                    <li key={i} className={s.kind === 'error' ? 'bad' : ''}>
+                      <span className="muted tiny">{clock(s.time)}</span>
+                      <span>{timelineTitle(s, nameOf)}</span>
+                      {timelineDetail(s) && <span className="muted small">{timelineDetail(s)}</span>}
+                    </li>
+                  ))}
+                </ol>
+              )}
+        </div>
+      </div>
+    </Modal>
   );
 }
 
@@ -175,6 +264,10 @@ const EMPTY_MODES: Array<[number, string]> = [[0, 'Smart'], [1, 'Max suction'], 
 
 const SECTIONS: Array<[string, string]> = [
   ['robot', 'Robot'],
+  ['voice', 'Voice Assistant'],
+  ['carpet', 'Carpet'],
+  ['floor', 'Floor cleaning'],
+  ['obstacle', 'Obstacles'],
   ['dock', 'Dock'],
   ['beta', 'Beta'],
   ['quiet', 'Do Not Disturb'],
@@ -247,6 +340,12 @@ export function RobotSettingsTab({ snap, rooms, actions }: { snap: VacuumSnapsho
         {sectionHas(snap, 'FLOOR') && (
           <Panel title="Floor cleaning" id="settings-floor">
             <div className="setting-list"><FeatureRows snap={snap} actions={actions} section="FLOOR" /></div>
+          </Panel>
+        )}
+
+        {sectionHas(snap, 'OBSTACLE') && (
+          <Panel title="Obstacles" id="settings-obstacle">
+            <div className="setting-list"><FeatureRows snap={snap} actions={actions} section="OBSTACLE" /></div>
           </Panel>
         )}
 

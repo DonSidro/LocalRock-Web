@@ -1,6 +1,9 @@
 import { createServer as createHttpsServer, type ServerOptions } from 'node:https';
 import { createServer as createTcpServer } from 'node:net';
 import { gzipSync } from 'node:zlib';
+import { constants, createCipheriv, createPublicKey, publicEncrypt, randomBytes } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import aedes from 'aedes';
 import selfsigned from 'selfsigned';
@@ -128,6 +131,7 @@ function home() {
     ],
   };
 }
+
 const scenes = [
   { id: 101, name: 'After dinner', enabled: true, type: 'WORKFLOW', deviceId: 'SimS8ProUltra01', param: '{}' },
   { id: 102, name: 'Kitchen twice', enabled: true, type: 'WORKFLOW', deviceId: 'SimS8ProUltra01', param: '{}' },
@@ -316,12 +320,62 @@ function rpcReply(robot: SimRobot, topic: string, id: number, reply: { result: u
   publish(topic, frame(robot, Protocol.RPC_RESPONSE, Buffer.from(JSON.stringify({ dps: { 102: inner }, t: Math.floor(Date.now() / 1000) }))));
 }
 
-function mapReply(robot: SimRobot, topic: string, requestId: number, security: { endpoint: string; nonce: string }): void {
+const obstacleJpeg = readFileSync(fileURLToPath(new URL('../test/fixtures/sim_obstacle.jpg', import.meta.url)));
+const patrolPng = readFileSync(fileURLToPath(new URL('../test/fixtures/sim_patrol.png', import.meta.url)));
+
+/** A "ROBOROCK" blob header: request id at 8, header size at 16, body length at 20. */
+function blobHeader(requestId: number, size: number, bodyLength: number): Buffer {
+  const h = Buffer.alloc(size);
+  h.write('ROBOROCK', 0, 'ascii');
+  h.writeUInt32LE(requestId, 8);
+  h.writeUInt16LE(size, 16);
+  h.writeUInt32LE(bodyLength, 20);
+  return h;
+}
+
+function photoBlock(type: number, data: Buffer): Buffer {
+  const h = Buffer.alloc(8);
+  h.writeUInt16LE(type, 0); h.writeUInt16LE(8, 2); h.writeUInt32LE(data.length, 4);
+  return Buffer.concat([h, data]);
+}
+
+/** get_photo: a box and the JPEG, split like a full frame: the first part on protocol 300, the rest on 301. */
+function photoReply(robot: SimRobot, topic: string, requestId: number): void {
+  const box = Buffer.alloc(8);
+  [50, 40, 110, 90].forEach((v, i) => box.writeUInt16LE(v, i * 2));
+  const body = gzipSync(Buffer.concat([photoBlock(2, box), photoBlock(3, obstacleJpeg)]));
+  const cut = Math.floor(body.length / 2);
+  publish(topic, frame(robot, 300, Buffer.concat([blobHeader(requestId, 24, body.length), body.subarray(0, cut)])));
+  setTimeout(() => publish(topic, frame(robot, Protocol.MAP_RESPONSE, body.subarray(cut))), 50);
+}
+
+/** get_patrol_photo with cipher_suite 1: two thumbnails, AES-CBC under a key wrapped to the request's RSA key. */
+function patrolReply(robot: SimRobot, topic: string, requestId: number, pub: { n: string; e: string }): void {
+  const rec = (x: number) => {
+    const h = Buffer.alloc(16);
+    h.writeUInt16LE(16, 0); h.writeUInt16LE(x, 2); h.writeUInt16LE(25_000, 4); h.writeUInt16LE(64, 6); h.writeUInt16LE(48, 8); h.writeUInt16LE(90, 10);
+    h.writeUInt32LE(patrolPng.length, 12);
+    return Buffer.concat([h, patrolPng]);
+  };
+  const plain = gzipSync(Buffer.concat([Buffer.alloc(12), rec(25_000), rec(25_100)]));
+  const iv = randomBytes(16);
+  const key = randomBytes(16);
+  const c = createCipheriv('aes-128-cbc', key, iv);
+  const body = Buffer.concat([c.update(plain), c.final()]);
+  const n = Buffer.from(pub.n.length % 2 ? `0${pub.n}` : pub.n, 'hex');
+  const rsa = createPublicKey({ key: { kty: 'RSA', n: n.toString('base64url'), e: Buffer.from(pub.e.length % 2 ? `0${pub.e}` : pub.e, 'hex').toString('base64url') }, format: 'jwk' });
+  const wrapped = publicEncrypt({ key: rsa, padding: constants.RSA_PKCS1_PADDING }, Buffer.concat([iv, key]));
+  const header = blobHeader(requestId, 184, body.length);
+  wrapped.copy(header, 56);
+  publish(topic, frame(robot, Protocol.MAP_RESPONSE, Buffer.concat([header, body])));
+}
+
+function mapReply(robot: SimRobot, topic: string, requestId: number, security: { endpoint: string; nonce: string }, cruise = false): void {
   const header = Buffer.alloc(24);
   header.write(security.endpoint.substring(0, 8), 0, 'latin1');
   header[16] = requestId & 0xff;
   header[17] = (requestId >>> 8) & 0xff;
-  const body = aesCbcEncrypt(gzipSync(robot.mapBytes()), Buffer.from(security.nonce, 'hex'), Buffer.alloc(16));
+  const body = aesCbcEncrypt(gzipSync(robot.mapBytes(cruise)), Buffer.from(security.nonce, 'hex'), Buffer.alloc(16));
   publish(topic, frame(robot, Protocol.MAP_RESPONSE, Buffer.concat([header, body])));
 }
 
@@ -341,6 +395,31 @@ broker.on('publish', (packet, client) => {
     const req = JSON.parse(outer.dps['101']!) as { id: number; method: string; params: unknown; security?: { endpoint: string; nonce: string } };
     if (req.method === 'get_map_v1' && req.security) {
       setTimeout(() => mapReply(robot, replyTopic, req.id, req.security!), 300);
+      continue;
+    }
+    // A past run's map: ["ok"], then the map as a frame for the request (the live map stands in).
+    if (req.method === 'get_clean_record_map' && req.security) {
+      const cruise = (req.params as Record<string, number>)['start_time'] === 1760300000;
+      setTimeout(() => rpcReply(robot, replyTopic, req.id, { result: ['ok'] }), 60);
+      setTimeout(() => mapReply(robot, replyTopic, req.id, req.security!, cruise), 400);
+      continue;
+    }
+    if (req.method === 'get_random_pkey') {
+      setTimeout(() => rpcReply(robot, replyTopic, req.id, { result: [{ pub_key: { e: '10001', n: 'c0ffee' } }] }), 40);
+      continue;
+    }
+    if (req.method === 'get_photo' && req.security) {
+      setTimeout(() => rpcReply(robot, replyTopic, req.id, { result: ['ok'] }), 40);
+      setTimeout(() => photoReply(robot, replyTopic, req.id), 200);
+      continue;
+    }
+    // Like a Curv 2 Flow: a plain get_patrol_photo gets no answer; cipher_suite 1 works.
+    if (req.method === 'get_patrol_photo' && req.security) {
+      const sec = (req.params as { security?: { cipher_suite?: number; pub_key?: { n: string; e: string } } }).security;
+      if (sec?.cipher_suite !== 1 || !sec.pub_key) continue;
+      const pub = sec.pub_key;
+      setTimeout(() => rpcReply(robot, replyTopic, req.id, { result: ['ok'] }), 40);
+      setTimeout(() => patrolReply(robot, replyTopic, req.id, pub), 200);
       continue;
     }
     robot.handle(req.method, req.params, (reply, delayMs = 60) => {

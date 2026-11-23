@@ -1,3 +1,4 @@
+import type { MapObstacle, PatrolPoint } from './obstacles.js';
 /*
  * Parsed map model and the map's coordinate spaces, ported from LocalRock's B01Map.kt (ParsedMap),
  * MapGeometry.kt, MapEditCommands.kt (thresholdStrip) and MapRenderer.kt (contentBoundsNorm).
@@ -66,6 +67,11 @@ export interface ParsedMap {
   unmodeledRestrictionBlocks: number[];
   format: MapFormat;
   carpetAreas: MapZone[];
+  /** Obstacles the robot recognised (legacy blocks 13-16). Shown, not edited. */
+  obstacles: MapObstacle[];
+  /** The points of a Cruise run's record map (legacy block 37), with its task id. */
+  patrolPoints: PatrolPoint[];
+  patrolTaskId: number | null;
   /** The map stores carpet flags (block 39), so set_carpet_area must send them back. */
   carpetFlagsPresent: boolean;
   thresholds: MapZone[];

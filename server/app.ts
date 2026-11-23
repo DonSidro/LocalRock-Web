@@ -506,5 +506,8 @@ export function toMapDto(map: ParsedMap, version: number): MapDto {
     carpetAreas: map.carpetAreas,
     carpetFlagsPresent: map.carpetFlagsPresent,
     thresholds: map.thresholds,
+    obstacles: map.obstacles,
+    patrolPoints: map.patrolPoints,
+    patrolTaskId: map.patrolTaskId,
   };
 }

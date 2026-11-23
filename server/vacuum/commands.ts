@@ -40,6 +40,8 @@ export const appStartWash = (s: VacuumSession) => s.sendCommand('app_start_wash'
 export const appStopWash = (s: VacuumSession) => s.sendCommand('app_stop_wash');
 export const getCleanRecord = (s: VacuumSession, recordId: number) => s.sendCommand('get_clean_record', [recordId]);
 export const getCleanSummary = (s: VacuumSession) => s.sendCommand('get_clean_summary');
+/** A run's timeline, a page at a time; the Curv 2 Flow answers it, the Qrevo Pro does not recognise the method. */
+export const getCleanDetail = (s: VacuumSession, begin: number, from: number) => s.sendCommandRaw('get_clean_detail', { begin, type: 0, id: 0, from });
 export const resetConsumable = (s: VacuumSession, field: string) => s.sendCommand('reset_consumable', [field]);
 export const findMe = (s: VacuumSession) => s.sendCommand('find_me');
 export const appRcStart = (s: VacuumSession) => s.sendCommand('app_rc_start');

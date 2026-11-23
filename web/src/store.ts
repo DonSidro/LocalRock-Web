@@ -112,6 +112,9 @@ export function decodeMap(dto: MapDto): ParsedMap {
     carpetAreas: dto.carpetAreas,
     carpetFlagsPresent: dto.carpetFlagsPresent,
     thresholds: dto.thresholds,
+    obstacles: dto.obstacles ?? [],
+    patrolPoints: dto.patrolPoints ?? [],
+    patrolTaskId: dto.patrolTaskId ?? null,
   };
 }
 

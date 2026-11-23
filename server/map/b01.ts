@@ -193,6 +193,9 @@ export function parseB01Map(input: Uint8Array): ParsedMap {
     carpetAreas: [],
     carpetFlagsPresent: false,
     thresholds: [],
+    obstacles: [],
+    patrolPoints: [],
+    patrolTaskId: null,
     originalGrid: null,
   };
 }

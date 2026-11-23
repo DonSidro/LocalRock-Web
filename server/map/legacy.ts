@@ -1,3 +1,4 @@
+import { parseObstacles, parsePatrolPoints, type MapObstacle, type PatrolPoint } from '../../shared/obstacles.js';
 import { legacyGrid, type MapPoint, type MapRoom, type MapZone, type ParsedMap, type VirtualWall, type ZoneKind } from '../../shared/map.js';
 
 /*
@@ -52,6 +53,9 @@ export function parseLegacyMap(input: Uint8Array): ParsedMap {
   let segmentMaterials: Record<number, number> = {};
   let segmentMaterialDirections: Record<number, number> = {};
   const unmodeled = new Set<number>();
+  const obstacles: MapObstacle[] = [];
+  let patrolPoints: PatrolPoint[] = [];
+  let patrolTaskId: number | null = null;
 
   let off = headerLen;
   while (off + 8 <= bytes.length) {
@@ -131,6 +135,17 @@ export function parseLegacyMap(input: Uint8Array): ParsedMap {
         segmentMaterialDirections = m;
         break;
       }
+      // Obstacle blocks, ids from vacuum-map-parser-roborock: 13 obstacles, 14 ignored, 15 and 16 the same with photo ids.
+      case 13: case 14: case 15: case 16:
+        obstacles.push(...parseObstacles(bytes, body, entryCount(bytes, off, blockHeaderLen, blockDataLen), blockDataLen, type === 14 || type === 16));
+        break;
+      // A Cruise record: the header carries the task id (u32 at 8) and the point count (u32 at 12).
+      case 37:
+        if (blockHeaderLen >= 16) {
+          patrolTaskId = bytes.readUInt32LE(off + 8);
+          patrolPoints = parsePatrolPoints(bytes, body, bytes.readUInt32LE(off + 12), blockDataLen);
+        }
+        break;
       default:
         if (UNMODELED_RESTRICTION_BLOCKS.has(type) && entryCount(bytes, off, blockHeaderLen, blockDataLen) > 0) {
           unmodeled.add(type);
@@ -174,6 +189,9 @@ export function parseLegacyMap(input: Uint8Array): ParsedMap {
     }));
 
   return {
+    obstacles,
+    patrolPoints,
+    patrolTaskId,
     width: imageWidth,
     height: imageHeight,
     grid,

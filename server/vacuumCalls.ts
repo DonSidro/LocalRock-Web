@@ -1,6 +1,6 @@
 import { FanPower, MopRoute, WaterBoxMode } from '../shared/codes.js';
 import { FloorMaterial, MAX_MAP_COORD_MM } from '../shared/map.js';
-import type { App } from './app.js';
+import { toMapDto, type App } from './app.js';
 import { CAMERA_METHODS } from './vacuum/commands.js';
 import { UserError } from './vacuum/errors.js';
 import type { VacuumRepository } from './vacuum/repository.js';
@@ -98,6 +98,14 @@ export const CALLS: Record<string, Call> = {
     await repo.fetchConsumables();
   }),
   fetchHistory: read((repo) => repo.fetchCleanHistory()),
+  fetchObstaclePhoto: read((repo, a) => {
+    const id = str(a['photoId'], 'photo', 32);
+    if (!/^[!-~]+$/.test(id)) throw new UserError('Invalid photo id');
+    return repo.fetchObstaclePhoto(id);
+  }),
+  fetchPatrolThumbnails: read((repo, a) => repo.fetchPatrolThumbnails(int(a['taskId'], 'run', 0, 0xffffffff), int(a['x'], 'x', 0, 65535), int(a['y'], 'y', 0, 65535))),
+  fetchCleanRecordMap: read(async (repo, a) => toMapDto(await repo.fetchCleanRecordMap(int(a['begin'], 'run', 0, 4_102_444_800)), 0)),
+  fetchCleanTimeline: read((repo, a) => repo.fetchCleanTimeline(int(a['begin'], 'run', 0, 4_102_444_800), int(a['end'], 'run', 0, 4_102_444_800))),
 
   findMe: action((repo) => repo.findMe()),
   rcStart: read((repo) => repo.rcStart()),

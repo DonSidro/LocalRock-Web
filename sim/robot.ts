@@ -61,7 +61,28 @@ export class SimRobot {
   private sequence: number[] = [];
   private roomModes: Array<Record<string, number>> = [];
   private timers: Array<{ id: string; on: boolean; cron: string }> = [{ id: '1700000000', on: true, cron: '0 9 * * 1,2,3,4,5' }];
-  private settings = { volume: 80, lock: 0, led: 1, carpet: 1, wash: 1, washInterval: 1, dust: 0 };
+  private settings = { volume: 80, lock: 0, led: 1, carpet: 1, wash: 1, smartWash: 0, washInterval: 900, dust: 0, waterTemp: 2 };
+  private dryer: Record<string, unknown> = { status: 1, on: { cliff_on: 0, dry_time: 10_800 }, off: { cliff_off: 0 }, heating_film_time: 0 };
+  private valley = { enabled: 0, start_hour: 22, start_minute: 0, end_hour: 6, end_minute: 0 };
+  private opts = { brush: 1, collision: 1, carpetBoost: 1, pattern: 0, battery: 0 };
+  private matter = { state: 'KeyNotExit', code: '', readyAt: 0 };
+  private ota = { state: 'idle', progress: 0 };
+  private voice = { on: 1, sid: 1, installing: 0, progress: 0 };
+
+  /** Downloads for ~6 s, installs for ~4 s, then reports the new version. */
+  startOta(version: string): void {
+    this.ota = { state: 'downloading', progress: 0 };
+    const tick = setInterval(() => {
+      if (this.ota.state === 'downloading') {
+        this.ota.progress = Math.min(100, this.ota.progress + 20);
+        if (this.ota.progress >= 100) this.ota = { state: 'installing', progress: 0 };
+      } else if (this.ota.state === 'installing') {
+        this.ota = { state: 'idle', progress: 0 };
+        this.config.fv = version;
+        clearInterval(tick);
+      }
+    }, 1_200);
+  }
   private dnd = { start_hour: 22, start_minute: 0, end_hour: 8, end_minute: 0, enabled: 1 };
   private consumables = { main_brush_work_time: 412_000, side_brush_work_time: 655_000, filter_work_time: 120_000, sensor_dirty_time: 98_000, cleaning_brush_work_times: 42, strainer_work_times: 120 };
   private cleanSeconds = 0;
@@ -109,11 +130,14 @@ export class SimRobot {
     this.dock = p.chargerMm;
   }
 
-  mapBytes(): Buffer {
+  /** The live map, or with cruise a Cruise record's map with its points. */
+  mapBytes(cruise = false): Buffer {
     if (this.b01Map) return this.b01Map;
     return writeLegacyMap(this.baseMap!, {
       pixels: this.pixels!, noGo: this.noGo, noMop: this.noMop, walls: this.walls, carpets: this.carpets,
       thresholds: this.thresholds, materials: this.materials, directions: this.directions, robot: this.robotPos,
+      obstacles: [{ x: 25_200, y: 24_800, type: 2, photoId: 'OBS0001' }, { x: 26_600, y: 26_000, type: 0, photoId: 'OBS0002' }],
+      ...(cruise ? { patrol: { taskId: 77, points: [{ x: 25_000, y: 25_000, photoIds: ['PH1', 'PH2'] }, { x: 27_000, y: 25_500, photoIds: ['PH3'] }] } } : {}),
     });
   }
 
@@ -307,10 +331,25 @@ export class SimRobot {
       }
       case 'get_consumable': return respond({ result: [this.consumables] });
       case 'reset_consumable': (this.consumables as Record<string, number>)[String(p0)] = 0; return respond(ok);
-      case 'get_clean_summary': return respond({ result: [86_400 + 3_600 * 3, 412_000_000, 57, [1760600000, 1760500000, 1760400000]] });
+      case 'get_clean_summary': return respond({ result: { clean_time: 86_400 + 3_600 * 3, clean_area: 412_000_000, clean_count: 57, patrol_count: 1, records: [1760600000, 1760500000, 1760400000, 1760300000] } });
+      case 'get_clean_detail': {
+        const o = params as Record<string, number>;
+        if (o['begin'] !== 1760600000) return respond({ result: {} });
+        const ev = (t: number, i: number, e: Record<string, number>) => ({ t, i, e: JSON.stringify(e) });
+        return respond({ result: { from: 0, num: 5, more: 0, events: [
+          ev(1760600000, 25, { 252: 3, 3: 2, 4: 1, 5: 0, 6: 1 }),
+          ev(1760600060, 42, { 2: 16, 421: 1, 422: 14 }),
+          ev(1760600600, 52, { 521: 0 }),
+          { t: 1760600900, i: 31, e: { 311: 8, 312: 0 } },
+          { t: 1760600900, i: 11, e: { 111: 5, 112: 12 } },
+        ] } });
+      }
       case 'get_clean_record': {
         const begin = Number(p0);
-        return respond({ result: [[begin, begin + 2_700, 2_640, 48_500_000, 0, begin === 1760400000 ? 0 : 1]] });
+        // Object records like newer firmware; the oldest is a Cruise run.
+        if (begin === 1760300000) return respond({ result: { begin, end: begin + 600, duration: 580, area: 0, error: 0, complete: 1, start_type: 2, clean_type: 5, finish_reason: 52 } });
+        return respond({ result: { begin, end: begin + 2_700, duration: 2_640, area: 48_500_000, cleaned_area: 52_100_000, error: 0, complete: begin === 1760400000 ? 0 : 1,
+          start_type: begin === 1760500000 ? 3 : 2, clean_type: 1, finish_reason: begin === 1760400000 ? 21 : 56, dust_collection_status: 1, wash_count: 2 } });
       }
       case 'get_room_mapping': return respond({ result: this.roomTable });
       case 'find_me':

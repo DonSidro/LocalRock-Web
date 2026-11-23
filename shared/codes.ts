@@ -192,6 +192,7 @@ export function describeState(state: number): string {
     case State.CHARGING: return 'Charging';
     case State.CHARGING_ERROR: return 'Charging error';
     case State.PAUSED: return 'Paused';
+    case State.PATROLLING: return 'On cruise';
     case State.SPOT_CLEANING: return 'Spot cleaning';
     case State.ERROR: return 'Error';
     case State.SHUTTING_DOWN: return 'Shutting down';

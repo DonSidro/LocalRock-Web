@@ -131,10 +131,26 @@ async function main() {
     const r = await call(S8, name);
     check(r.ok, `${name} (${r.error ?? 'ok'})`);
   }
-  await until('reads', () => snapshots.get(S8)?.cleanHistory.length === 3 && snapshots.get(S8)?.dnd);
+  await until('reads', () => snapshots.get(S8)?.cleanHistory.length === 4 && snapshots.get(S8)?.dnd);
   const s = snapshots.get(S8)!;
   check(s.consumables?.mainBrushWorkTime === 412_000, 'consumables parsed');
-  check(s.cleanHistory.length === 3 && s.cleanSummary?.totalCount === 57, 'history and summary parsed');
+  check(s.cleanHistory.length === 4 && s.cleanSummary?.totalCount === 57 && s.cleanSummary.patrolCount === 1, 'history and summary parsed');
+  check(s.cleanHistory.filter((r) => r.cleanType === 5).length === 1 && s.cleanHistory.some((r) => r.cleanedAreaMm2 === 52_100_000 && r.washCount === 2), 'full records with cruise run and cleaned area');
+  const runMap = await call(S8, 'fetchCleanRecordMap', { begin: 1760600000 });
+  check(runMap.ok && runMap.result?.rooms?.length > 0, `run map fetched (${runMap.error ?? 'ok'})`);
+  const tl = await call(S8, 'fetchCleanTimeline', { begin: 1760600000, end: 1760602700 });
+  check(tl.ok && tl.result?.map((x: { kind: string }) => x.kind).join() === 'start,room,washMop,error,finished', `run timeline built (${JSON.stringify(tl.result?.map((x: { kind: string }) => x.kind))})`);
+  // Obstacles on the live map, their photos (split over protocol 300/301), and cruise points with RSA-wrapped thumbnails
+  const obs = maps.get(S8)?.obstacles ?? [];
+  check(obs.length === 2 && obs[0]!.photoId === 'OBS0001' && obs[0]!.type === 2 && Math.abs((obs[0]!.confidence ?? 0) - 0.85) < 0.01, `obstacles parsed (${JSON.stringify(obs[0])})`);
+  const photo = await call(S8, 'fetchObstaclePhoto', { photoId: 'OBS0001' });
+  check(photo.ok && String(photo.result?.dataUrl).startsWith('data:image/jpeg;base64,') && photo.result?.box?.right === 110, `obstacle photo joined from split frames (${photo.error ?? 'ok'})`);
+  const cruiseMap = await call(S8, 'fetchCleanRecordMap', { begin: 1760300000 });
+  check(cruiseMap.ok && cruiseMap.result?.patrolTaskId === 77 && cruiseMap.result?.patrolPoints?.length === 2 && cruiseMap.result.patrolPoints[0].photoIds.join() === 'PH1,PH2', 'cruise points read from the run map');
+  const thumbs = await call(S8, 'fetchPatrolThumbnails', { taskId: 77, x: 25000, y: 25000 });
+  check(thumbs.ok && thumbs.result?.length === 2 && String(thumbs.result[0].dataUrl).startsWith('data:image/png;base64,'), `cruise thumbnails decrypted with cipher_suite 1 (${thumbs.error ?? 'ok'})`);
+  const noTl = await call(S8, 'fetchCleanTimeline', { begin: 1760500000, end: 1760502700 });
+  check(noTl.ok && noTl.result === null, 'a run without events has no timeline');
   check(s.timers.length === 1 && s.timers[0]!.weekdays.join() === '1,2,3,4,5', 'schedule parsed');
   check(s.robotSettings.volume === 80 && s.robotSettings.ledEnabled, 'robot settings parsed (array and object forms)');
   check(s.dnd?.enabled === true && s.dnd.startHour === 22, 'DND parsed');

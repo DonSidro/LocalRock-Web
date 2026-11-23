@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ACTIVE_STATES, DockErrorCodes, FanPower, MopRoute, State, SWITCH_MAP_MODE_SMART, WaterBoxMode, isCleanEfficiencySupported,
   describeError, describeState, isCustomizeModeSet, isSmartModeSet, isVacuumThenMopRepeatSupported, isVacuumThenMopSupported, mapNameBlocker, mapSavingEnabled, multiLevelEnabled, normalizeWaterMode, roomCleanModesFor,
@@ -7,7 +7,9 @@ import {
 import type { FloorMap, LastKnown, VacuumSnapshot } from '../../../shared/api';
 import { roomAtNorm, type MapRoom, type ParsedMap } from '../../../shared/map';
 import { Icon, type IconName } from '../icons';
-import { MapView } from '../map/MapView';
+import { MapView, type MapViewApi } from '../map/MapView';
+import { ObstacleDialog, drawObstacles, obstacleAt } from './Obstacles';
+import type { MapObstacle } from '../../../shared/obstacles';
 import { ACTIVE_CLEANING, batteryColor, isCharging, primaryAction, statusLine } from '../robotStatus';
 import { navigate, vacRoute, type MapTool, type VacTab } from '../router';
 import { useStore, useVacuum } from '../store';
@@ -236,6 +238,8 @@ function Overview({ duid, snap, map, tool, run, read, busy, selected, setSelecte
   const [zonesSent, setZonesSent] = useState(false);
   const [target, setTarget] = useState<[number, number] | null>(null);
   const [pinSent, setPinSent] = useState(false);
+  const [obstacle, setObstacle] = useState<MapObstacle | null>(null);
+  const mapApiRef = useRef<MapViewApi | null>(null);
   const [lastArea, setLastArea] = useState<number | null>(null);
 
   useEffect(() => {
@@ -284,6 +288,7 @@ function Overview({ duid, snap, map, tool, run, read, busy, selected, setSelecte
 
   return (
     <div className="overview">
+      {obstacle && <ObstacleDialog duid={duid} obstacle={obstacle} onClose={() => setObstacle(null)} />}
       <section className="map-pane" aria-label="Map">
         <div className="map-toolbar">
           <Segmented label="Map tool" options={[['rooms', 'Rooms'], ['zones', 'Zones'], ['pin', 'Pin & Go']] as Array<[MapTool, string]>} value={tool} onChange={setTool} />
@@ -309,8 +314,10 @@ function Overview({ duid, snap, map, tool, run, read, busy, selected, setSelecte
               selectedRoomIds={tool === 'rooms' ? selected : []}
               focusRoomId={tool === 'rooms' ? hoverRoom : null}
               drawing={tool !== 'rooms'}
-              overlayKey={[tool, zones, draft, target]}
+              overlayKey={[tool, zones, draft, target, map.obstacles, selectedZone]}
               overlay={({ ctx, api }) => {
+                mapApiRef.current = api;
+                drawObstacles(ctx, api, map.obstacles);
                 if (tool === 'zones') {
                   const color = getComputedStyle(document.documentElement).getPropertyValue('--primary').trim() || '#0b7a75';
                   const drawZone = (z: Zone, dashed: boolean) => {
@@ -342,6 +349,8 @@ function Overview({ duid, snap, map, tool, run, read, busy, selected, setSelecte
                 }
               }}
               onTap={(p) => {
+                const hit = tool !== 'zones' ? obstacleAt(mapApiRef.current, map.obstacles, p.sx, p.sy) : null;
+                if (hit) { setObstacle(hit); return; }
                 if (tool === 'rooms') {
                   const room = roomAtNorm(map, p.normX, p.normY);
                   if (room) toggleRoom(room.id);
