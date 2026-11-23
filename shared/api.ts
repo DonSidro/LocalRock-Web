@@ -8,9 +8,15 @@ import type { MapPoint, MapRoom, MapZone, VirtualWall } from './map.js';
 
 /* Data exchanged between the server and the browser. */
 
+/**
+ * A saved map. savedAt is when the robot last stored it and backupAt when its on-robot backup was
+ * made, both in the robot's own epoch seconds; backupAt is null when the map has no backup.
+ */
 export interface FloorMap {
   name: string;
   mapFlag: number;
+  savedAt: number | null;
+  backupAt: number | null;
 }
 
 export interface ConsumableStatus {

@@ -36,7 +36,8 @@ describe('map edit payloads', () => {
   });
 
   it('save_map enforces map index, vertex limit and bounds', () => {
-    expect(() => saveMapData([noGo], [], 1)).toThrow(MapEditError);
+    // A robot whose only map is map 1 (a Qrevo S Pro) took [100, 1].
+    expect(j(saveMapData([noGo], [], 1))).toBe(j([[0, 30233, 24477, 31623, 24477, 31623, 23066, 30233, 23066], [100, 1]]));
     const zones = Array.from({ length: 17 }, () => noGo);
     expect(() => saveMapData(zones, [], 0)).not.toThrow();
     expect(() => saveMapData(zones, [wallA], 0)).toThrow(MapEditError);
@@ -76,7 +77,8 @@ describe('map edit payloads', () => {
   it('carpets and thresholds match the captures', () => {
     expect(j(encodeCarpetAreaParams([carpetA, carpetB], 0, false)))
       .toBe('{"map_index":0,"type":1,"zone_data":[[30660,24711,32317,24711,32317,23109,30660,23109],[25603,21237,28555,21237,28555,18284,25603,18284]]}');
-    expect(() => encodeCarpetAreaParams([carpetA], 1, false)).toThrow(MapEditError);
+    // Any single map's index is sent, not only map 0.
+    expect(JSON.parse(j(encodeCarpetAreaParams([carpetA], 1, false))).map_index).toBe(1);
     expect(j(encodeThresholdParams([thresholdA, thresholdB], 0)))
       .toBe('{"map_index":0,"sides_infos":[[0,0,0,0],[0,0,0,0]],"zones":[[2,30294,26592,30281,25684,30167,25685,30180,26593],[2,26240,17598,27347,16642,27273,16556,26165,17512]]}');
     const round = zone([25744, 26784, 26536, 26784, 26536, 25992, 25744, 25992], 'CARPET', 0x0633e700);
@@ -115,7 +117,8 @@ describe('map edit payloads', () => {
     expect(saveMapIndex([])).toBeNull();
     expect(saveMapIndex([{ mapFlag: 0 }, { mapFlag: 1 }])).toBeNull();
     expect(mapIndexBlocker(0)).toBeNull();
-    expect(mapIndexBlocker(1)).not.toBeNull();
+    expect(mapIndexBlocker(1)).toBeNull();
+    expect(mapIndexBlocker(null)).not.toBeNull();
     expect(loadedMapFlag({ mapStatus: 7 })).toBe(1);
     expect(loadedMapFlag({ mapStatus: 11 })).toBe(2);
     expect(loadedMapFlag({ mapStatus: 253 })).toBe(UNSAVED_MAP_FLAG);

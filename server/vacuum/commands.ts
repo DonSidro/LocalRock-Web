@@ -292,7 +292,6 @@ function quad(z: MapZone): number[] {
 
 /** [walls..., no-go zones..., [100, mapIndex]], the order the official app used. */
 export function saveMapData(noGoZones: MapZone[], walls: VirtualWall[], mapIndex: number): JsonValue {
-  if (mapIndex !== 0) throw new MapEditError('Saving zones is only confirmed for map index 0');
   const vertices = restrictionVertexCount(walls.length, noGoZones.length);
   if (vertices > MAX_RESTRICTION_VERTICES) {
     throw new MapEditError(`Too many restrictions: ${vertices} of ${MAX_RESTRICTION_VERTICES} points used`);
@@ -448,10 +447,10 @@ export function requireApplied(resp: V1Response, method: string): V1Response {
 }
 
 export const setCarpetAreas = async (s: VacuumSession, carpets: MapZone[], mapIndex: number, withFlags: boolean) =>
-  requireOk(await s.sendCommandRaw('set_carpet_area', encodeCarpetAreaParams(carpets, mapIndex, withFlags), { timeoutMs: MAP_EDIT_TIMEOUT_MS }), 'set_carpet_area');
+  requireApplied(await s.sendCommandRaw('set_carpet_area', encodeCarpetAreaParams(carpets, mapIndex, withFlags), { timeoutMs: MAP_EDIT_TIMEOUT_MS }), 'set_carpet_area');
 
 export const setThresholds = async (s: VacuumSession, thresholds: MapZone[], mapIndex: number) =>
-  requireOk(await s.sendCommandRaw('app_set_smart_door_sill', encodeThresholdParams(thresholds, mapIndex), { timeoutMs: MAP_EDIT_TIMEOUT_MS }), 'app_set_smart_door_sill');
+  requireApplied(await s.sendCommandRaw('app_set_smart_door_sill', encodeThresholdParams(thresholds, mapIndex), { timeoutMs: MAP_EDIT_TIMEOUT_MS }), 'app_set_smart_door_sill');
 
 export const mergeSegment = (s: VacuumSession, a: number, b: number) => sendData(s, 'merge_segment', mergeSegmentData(a, b));
 
@@ -477,6 +476,23 @@ export const nameMultiMap = async (s: VacuumSession, mapFlag: number, name: stri
 
 /** Deletes the map with its rooms, names, zones, walls, carpets and thresholds. */
 export const deleteMap = async (s: VacuumSession, mapFlag: number) => requireOk(await s.sendCommand('del_map', [mapFlag]), 'del_map');
+
+/*
+ * On-robot map backups, from captures of the official app on the S8 Pro Ultra (with multi-level maps on
+ * and off). The robot keeps one backup per saved map (max_bak_map 1), listed under the map as bak_maps.
+ * Backing up replaces it. Neither command used need_retry or start/end_edit_map.
+ */
+
+/** {"map_flag": 0}, the form manual_bak_map and recover_multi_map were captured with. */
+export const encodeMapFlagParams = (mapFlag: number): JsonValue => ({ map_flag: mapFlag });
+
+/** Replaces mapFlag's backup with the map as it is now. Answered ["ok"] within 2 s. */
+export const backupMap = (s: VacuumSession, mapFlag: number) =>
+  s.sendCommandRaw('manual_bak_map', encodeMapFlagParams(mapFlag), { timeoutMs: MAP_EDIT_TIMEOUT_MS });
+
+/** Puts mapFlag back to its backup. Answered ["ok"] after about 2.5 s. */
+export const restoreMapBackup = (s: VacuumSession, mapFlag: number) =>
+  s.sendCommandRaw('recover_multi_map', encodeMapFlagParams(mapFlag), { timeoutMs: MAP_EDIT_TIMEOUT_MS });
 
 export const startBuildMap = async (s: VacuumSession) => requireOk(await s.sendCommand('app_start_build_map'), 'app_start_build_map');
 

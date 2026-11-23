@@ -163,29 +163,19 @@ export function parseLegacyMap(input: Uint8Array): ParsedMap {
   const pixels = imagePixels;
   const grid = legacyGrid(pixels);
 
-  const sumX = new Map<number, number>();
-  const sumY = new Map<number, number>();
-  const count = new Map<number, number>();
-  for (let y = 0; y < imageHeight; y++) {
-    for (let x = 0; x < imageWidth; x++) {
-      const v = pixels[y * imageWidth + x]!;
-      if (v !== 0 && (v & 0x07) !== 1) {
-        const roomId = (v >>> 3) & 0x1f;
-        if (roomId > 0) {
-          sumX.set(roomId, (sumX.get(roomId) ?? 0) + x);
-          sumY.set(roomId, (sumY.get(roomId) ?? 0) + y);
-          count.set(roomId, (count.get(roomId) ?? 0) + 1);
-        }
-      }
-    }
+  const roomAt = new Int32Array(imageWidth * imageHeight);
+  for (let i = 0; i < roomAt.length; i++) {
+    const v = pixels[i]!;
+    if (v !== 0 && (v & 0x07) !== 1) roomAt[i] = (v >>> 3) & 0x1f;
   }
-  const rooms: MapRoom[] = [...count.entries()]
+  const cells = roomLabelCells(roomAt, imageWidth, imageHeight);
+  const rooms: MapRoom[] = [...cells.entries()]
     .sort((a, b) => a[0] - b[0])
-    .map(([roomId, n]) => ({
+    .map(([roomId, [x, y]]) => ({
       id: roomId,
       name: `Room ${roomId}`,
-      labelNormX: clamp01(sumX.get(roomId)! / n / imageWidth),
-      labelNormY: clamp01((imageHeight - 1 - sumY.get(roomId)! / n) / imageHeight),
+      labelNormX: clamp01((x + 0.5) / imageWidth),
+      labelNormY: clamp01((imageHeight - 1 - y + 0.5) / imageHeight),
     }));
 
   return {
@@ -268,4 +258,59 @@ function parseWalls(b: Buffer, off: number, headerLen: number, dataLen: number):
 
 function clamp01(v: number): number {
   return v < 0 ? 0 : v > 1 ? 1 : v;
+}
+
+/**
+ * Where to put each room's name: on the floor pixel nearest the room's middle among those at least
+ * half as open as the room's most open pixel. Openness is the city-block distance to the nearest
+ * wall, gap, other room or image edge, so a name stays inside an L-shaped hallway instead of sitting
+ * at its average, outside it (LocalRock's roomLabelCells).
+ */
+export function roomLabelCells(roomAt: Int32Array, width: number, height: number): Map<number, [number, number]> {
+  const far = new Int32Array(roomAt.length);
+  const same = (i: number, x: number, y: number) => x >= 0 && x < width && y >= 0 && y < height && roomAt[y * width + x] === roomAt[i];
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = y * width + x;
+      if (roomAt[i] === 0) continue;
+      const left = same(i, x - 1, y) ? far[i - 1]! : 0;
+      const below = same(i, x, y - 1) ? far[i - width]! : 0;
+      far[i] = Math.min(left, below) + 1;
+    }
+  }
+  for (let y = height - 1; y >= 0; y--) {
+    for (let x = width - 1; x >= 0; x--) {
+      const i = y * width + x;
+      if (roomAt[i] === 0) continue;
+      const right = same(i, x + 1, y) ? far[i + 1]! : 0;
+      const above = same(i, x, y + 1) ? far[i + width]! : 0;
+      far[i] = Math.min(far[i]!, Math.min(right, above) + 1);
+    }
+  }
+  const sumX = new Map<number, number>();
+  const sumY = new Map<number, number>();
+  const count = new Map<number, number>();
+  const mostOpen = new Map<number, number>();
+  for (let i = 0; i < roomAt.length; i++) {
+    const room = roomAt[i]!;
+    if (room === 0) continue;
+    sumX.set(room, (sumX.get(room) ?? 0) + (i % width));
+    sumY.set(room, (sumY.get(room) ?? 0) + Math.floor(i / width));
+    count.set(room, (count.get(room) ?? 0) + 1);
+    if (far[i]! > (mostOpen.get(room) ?? 0)) mostOpen.set(room, far[i]!);
+  }
+  const best = new Map<number, number>();
+  const bestDistance = new Map<number, number>();
+  for (let i = 0; i < roomAt.length; i++) {
+    const room = roomAt[i]!;
+    if (room === 0 || far[i]! < Math.floor((mostOpen.get(room)! + 1) / 2)) continue;
+    const n = count.get(room)!;
+    const dx = (i % width) - sumX.get(room)! / n;
+    const dy = Math.floor(i / width) - sumY.get(room)! / n;
+    const d = dx * dx + dy * dy;
+    if (d < (bestDistance.get(room) ?? Infinity)) { best.set(room, i); bestDistance.set(room, d); }
+  }
+  const out = new Map<number, [number, number]>();
+  for (const [room, i] of best) out.set(room, [i % width, Math.floor(i / width)]);
+  return out;
 }

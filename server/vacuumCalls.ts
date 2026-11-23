@@ -146,6 +146,8 @@ export const CALLS: Record<string, Call> = {
   renameFloorMap: action((repo, a) => repo.renameFloorMap(int(a['mapFlag'], 'map', 0, 62), str(a['name'], 'map name', 64))),
   deleteFloorMap: action((repo, a) => repo.deleteFloorMap(int(a['mapFlag'], 'map', 0, 62))),
   startMapping: action((repo) => repo.startMapping()),
+  backupFloorMap: action((repo, a) => repo.backupFloorMap(int(a['mapFlag'], 'map', 0, 62))),
+  restoreFloorMapBackup: action((repo, a) => repo.restoreFloorMapBackup(int(a['mapFlag'], 'map', 0, 62))),
   setMultiLevel: action((repo, a) => repo.setMultiLevel(bool(a['enabled'], 'multi-level'), a['keepMapFlag'] === null || a['keepMapFlag'] === undefined ? null : int(a['keepMapFlag'], 'map', 0, 62))),
   enableMapSaving: action((repo) => repo.enableMapSaving()),
   setSmartMapSwitching: action((repo, a) => repo.setSmartMapSwitching(bool(a['smart'], 'floor recognition'))),

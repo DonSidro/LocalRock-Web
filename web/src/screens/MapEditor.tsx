@@ -6,7 +6,7 @@ import {
   translateWall, translateZone, wallFitsMap, wallWithEnd, zoneCenter, zoneContains, zoneCorners, zoneFitsMap,
   type MapZone, type ParsedMap, type VirtualWall, type ZoneKind,
 } from '../../../shared/map';
-import { editBlockedReason, mapIndexBlocker, restrictionSaveBlocker, saveMapIndex } from '../../../shared/mapEdit';
+import { advertisedUnsupportedMapEdits, editBlockedReason, mapIndexBlocker, restrictionSaveBlocker, saveMapIndex, unsupportedMapEditNote } from '../../../shared/mapEdit';
 import { restrictionsMatch } from '../../../shared/verification';
 import { call } from '../api';
 import { Icon, type IconName } from '../icons';
@@ -327,11 +327,11 @@ export function MapEditorScreen({ duid }: { duid: string }) {
     return { move: (q) => apply(q.mm), end: (q) => apply(q.mm) };
   };
 
-  const onTap = (p: { mm: [number, number]; normX: number; normY: number }) => {
+  const onTap = (p: { mm: [number, number]; normX: number; normY: number; labelRoomId?: number | null }) => {
     const api = view.current;
     if (!api) return;
     if (mode === 'ROOMS') {
-      const segment = roomAtNorm(map, p.normX, p.normY)?.id ?? null;
+      const segment = p.labelRoomId ?? roomAtNorm(map, p.normX, p.normY)?.id ?? null;
       if (segment === null) return;
       if (roomAction.kind === 'merge' && segment !== roomAction.segment) setPendingMerge({ a: roomAction.segment, b: segment });
       else if (roomAction.kind === 'none') setSelectedRoom(segment);
@@ -478,6 +478,7 @@ export function MapEditorScreen({ duid }: { duid: string }) {
                   </button>
                 ))}
               </div>
+              {unsupportedMapEditNote(unsupported) && <p className="muted small">{unsupportedMapEditNote(unsupported)}</p>}
             </Panel>
 
             {selection && (
@@ -676,6 +677,7 @@ function RoomPanel({ map, segment, tag, working, enabled, onClose, onRename, onT
           {materialId === undefined ? "This robot's map doesn't report the current floor type."
             : currentChoice ? `Current: ${currentChoice.label}`
               : materialId === FloorMaterial.WOOD ? 'Current: Wood'
+                : materialId === FloorMaterial.CARPET ? 'Current: Carpet (set on the robot or in the Roborock app)'
                 : `Current: a type LocalRock doesn't know (id ${materialId})`}
         </span>
       </div>

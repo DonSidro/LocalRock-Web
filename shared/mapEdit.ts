@@ -10,7 +10,11 @@ export function saveMapIndex(floorMaps: { mapFlag: number }[]): number | null {
   return floorMaps.length === 1 ? floorMaps[0]!.mapFlag : null;
 }
 
-/** Every captured map edit named map index 0 on a robot with one saved map; anything else is unconfirmed. */
+/**
+ * Map edits name the map they change by its mapFlag (save_map's [100, n], and "map_index": n on carpets
+ * and thresholds). The map being edited is only certain when the robot holds exactly one map. That map
+ * need not be map 0: a robot that once had a second floor can keep its only map as map 1.
+ */
 export function mapIndexBlocker(mapIndex: number | null): string | null {
   return mapIndex === null ? 'Saving map edits is only supported on robots with a single saved map for now.' : null;
 }

@@ -80,7 +80,11 @@ export interface ParsedMap {
 }
 
 /** Floor material ids seen on the S8 Pro Ultra and in captures of the official app. */
-export const FloorMaterial = { DEFAULT: 0, WOOD: 3, TILE: 4 } as const;
+/**
+ * Floor types as the map reports them: 0 default, 3 wood, 4 tile, plus 2 carpet (a Qrevo 3 Pro's map
+ * reports 2 for its fully carpeted rooms). Carpet is read only, since setting it has not been captured.
+ */
+export const FloorMaterial = { DEFAULT: 0, CARPET: 2, WOOD: 3, TILE: 4 } as const;
 
 export const CARPET_FLAG_ROUND = 0x04000000;
 export const NEW_ROUND_CARPET_FLAGS = 0x06338000;

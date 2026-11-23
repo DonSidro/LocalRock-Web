@@ -5,7 +5,7 @@ import {
   isDockedAndIdle, isSmartPlanSupported, isWaterSlideSupported, mapNameBlocker, mapSavingEnabled, multiLevelEnabled, unsavedMapPresent, type RoomCleanMode, type VacuumStatus,
 } from '../../shared/codes.js';
 import { FloorMaterial, isRoundCarpet, type MapZone, type ParsedMap, type VirtualWall } from '../../shared/map.js';
-import { editBlockedReason, mapIndexBlocker, restrictionSaveBlocker, saveMapIndex } from '../../shared/mapEdit.js';
+import { editBlockedReason, mapIndexBlocker, restrictionSaveBlocker, saveMapIndex, unsupportedMapEditMessage, type UnsupportedKind } from '../../shared/mapEdit.js';
 import { restrictionsMatch, sameZones } from '../../shared/verification.js';
 import type {
   CleanRecord, CleanSummary, CleanTimer, ConsumableStatus, DndSettings, DockSettings, FloorMap, LastKnown, ObstaclePhotoDto, PatrolThumbnailDto, RobotAlert, VoiceSnapshot,
@@ -1485,7 +1485,9 @@ export class VacuumRepository extends EventEmitter {
       if (flag === null) continue;
       // An unnamed map must still be listed: saving zones relies on the count being right.
       const name = typeof e['name'] === 'string' && e['name'].trim() ? e['name'] : `Map ${flag + 1}`;
-      maps.push({ name, mapFlag: flag });
+      // Each map lists its on-robot backup under bak_maps.
+      const bak = Array.isArray(e['bak_maps']) && isObject(e['bak_maps'][0]) ? e['bak_maps'][0] as Record<string, unknown> : null;
+      maps.push({ name, mapFlag: flag, savedAt: intField(e, 'add_time'), backupAt: bak ? intField(bak, 'add_time') : null });
     }
     this.floorMaps = maps;
     this.floorMapsLoaded = true;
@@ -1538,6 +1540,20 @@ export class VacuumRepository extends EventEmitter {
       this.roomIds = [];
       this.rawSegmentTable = null;
       this.clearMap();
+    });
+  }
+
+  /**
+   * Replace mapFlag's on-robot backup with the map as it is now. Confirmed by the backup's time changing
+   * in the map list; it is the robot's clock, so it is compared with the old time.
+   */
+  backupFloorMap(mapFlag: number): Promise<void> {
+    return this.editMutex.run(async () => {
+      const before = (await this.requireFloorMap(mapFlag)).backupAt;
+      C.requireOk(await C.backupMap(this.deps.session, mapFlag), 'manual_bak_map');
+      await this.fetchFloorMaps();
+      const after = this.floorMaps.find((m) => m.mapFlag === mapFlag)?.backupAt ?? null;
+      if (after === null || after === before) throw new MapEditError(NOT_CONFIRMED);
     });
   }
 
@@ -1695,17 +1711,31 @@ export class VacuumRepository extends EventEmitter {
         const blocker = restrictionSaveBlocker(map, mapIndex);
         if (blocker) throw new MapEditError(blocker);
       }
+      // A robot that doesn't know the carpet or threshold command leaves that category out; the rest is still sent.
+      const refused: UnsupportedKind[] = [];
       await C.inEditSession(this.deps.session, async () => {
         if (restrictionsChanged) await C.saveMap(this.deps.session, noGoZones, walls, index);
-        if (carpetsChanged) await C.setCarpetAreas(this.deps.session, carpets, index, map.carpetFlagsPresent);
-        if (thresholdsChanged) await C.setThresholds(this.deps.session, thresholds, index);
+        const optional: Array<[UnsupportedKind, boolean, () => Promise<unknown>]> = [
+          ['CARPET', carpetsChanged, () => C.setCarpetAreas(this.deps.session, carpets, index, map.carpetFlagsPresent)],
+          ['THRESHOLD', thresholdsChanged, () => C.setThresholds(this.deps.session, thresholds, index)],
+        ];
+        for (const [kind, changed, send] of optional) {
+          if (!changed) continue;
+          try { await send(); } catch (e) { if (e instanceof RobotUnsupportedCommandError) refused.push(kind); else throw e; }
+        }
       });
-      const roundCount = carpets.filter(isRoundCarpet).length;
+      const wantCarpets = refused.includes('CARPET') ? map.carpetAreas : carpets;
+      const wantThresholds = refused.includes('THRESHOLD') ? map.thresholds : thresholds;
+      const roundCount = wantCarpets.filter(isRoundCarpet).length;
       const confirmed = await this.awaitMap((m) =>
         restrictionsMatch(m, noGoZones, map.noMopZones, walls) &&
-        sameZones(carpets, m.carpetAreas) &&
+        sameZones(wantCarpets, m.carpetAreas) &&
         m.carpetAreas.filter(isRoundCarpet).length === roundCount &&
-        sameZones(thresholds, m.thresholds));
+        sameZones(wantThresholds, m.thresholds));
+      if (refused.length > 0) {
+        const savedOther = restrictionsChanged || (carpetsChanged && !refused.includes('CARPET')) || (thresholdsChanged && !refused.includes('THRESHOLD'));
+        throw new MapEditError(unsupportedMapEditMessage(refused, savedOther));
+      }
       if (!confirmed) throw new MapEditError(NOT_CONFIRMED);
     });
   }

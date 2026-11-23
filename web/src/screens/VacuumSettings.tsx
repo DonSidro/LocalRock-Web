@@ -257,10 +257,11 @@ export function MaintenanceTab({ snap, actions }: { snap: VacuumSnapshot; action
 // ---- Settings ---------------------------------------------------------------------------------
 
 const VOLUMES: Array<[number, string]> = [[0, 'Off'], [30, 'Low'], [60, 'Medium'], [100, 'High']];
-const CARPET_MODES: Array<[number, string]> = [[0, 'Avoid carpet'], [1, 'Standard'], [2, 'Carpet boost']];
-const WASH_FREQS: Array<[number, string]> = [[0, 'Every trip'], [1, 'Every 2 trips'], [2, 'Every 3 trips']];
-const WASH_MODES: Array<[number, string]> = [[0, 'Light'], [1, 'Standard'], [2, 'Intensive']];
-const EMPTY_MODES: Array<[number, string]> = [[0, 'Smart'], [1, 'Max suction'], [2, 'Normal']];
+/** set_carpet_clean_mode in value order, as the official app names them; 3 only when the robot reports it. */
+function carpetModes(current: number): Array<[number, string]> {
+  const base: Array<[number, string]> = [[0, 'Avoid carpet'], [1, 'Rise (vacuum only)'], [2, 'Vacuum and mop (can wet carpet)']];
+  return current === 3 ? [...base, [3, 'Dynamic lift']] : base;
+}
 
 const SECTIONS: Array<[string, string]> = [
   ['robot', 'Robot'],
@@ -331,7 +332,7 @@ export function RobotSettingsTab({ snap, rooms, actions }: { snap: VacuumSnapsho
         <Panel title="Carpet" id="settings-carpet">
           <div className="setting-list">
             <SettingRow title="Carpet mode" sub="What the robot does on carpet.">
-              <Select label="Carpet mode" options={CARPET_MODES} value={r.carpetMode} disabled={busy} onChange={(v) => void run('setCarpetMode', { mode: v })} />
+              <Select label="Carpet mode" options={carpetModes(r.carpetMode)} value={r.carpetMode} disabled={busy} onChange={(v) => void run('setCarpetMode', { mode: v })} />
             </SettingRow>
             <FeatureRows snap={snap} actions={actions} section="CARPET" />
           </div>

@@ -255,6 +255,11 @@ async function main() {
   const rn = await call(S8, 'renameFloorMap', { mapFlag: 0, name: 'Ground floor' });
   check(rn.ok, `map renamed with read-back (${rn.error ?? 'ok'})`);
   check((await call(S8, 'renameFloorMap', { mapFlag: 0, name: 'Kælder' })).ok === false, 'non-ASCII map name refused');
+  check((await call(S8, 'restoreFloorMapBackup', { mapFlag: 0 })).ok === false, 'restore refused without a backup');
+  const bak = await call(S8, 'backupFloorMap', { mapFlag: 0 });
+  check(bak.ok && (snapshots.get(S8)?.floorMaps[0]?.backupAt ?? null) !== null, `map backed up and confirmed (${bak.error ?? 'ok'})`);
+  const restore = await call(S8, 'restoreFloorMapBackup', { mapFlag: 0 });
+  check(restore.ok, `map backup restored and confirmed (${restore.error ?? 'ok'})`);
 
   // Cleaning and alerts
   check((await api('/api/notify', { enabled: true })).ok, 'alerts on');

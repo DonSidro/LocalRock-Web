@@ -14,6 +14,8 @@ export interface PointerInfo {
   mm: [number, number];
   normX: number;
   normY: number;
+  /** The room whose name was under the pointer; a name wins over the floor under it. */
+  labelRoomId: number | null;
 }
 
 export interface CustomGesture {
@@ -115,9 +117,11 @@ export const MapView = forwardRef<MapViewApi, Props>(function MapView(props, ref
     return cellToMm(map, { x: c.x, y: c.y - 1 });
   };
 
+  const labelHits = useRef<LabelHit[]>([]);
   const info = (sx: number, sy: number): PointerInfo => {
     const c = cellAt(sx, sy);
-    return { sx, sy, mm: toMm(sx, sy), normX: c.x / map.width, normY: c.y / map.height };
+    const hit = [...labelHits.current].reverse().find((l) => sx >= l.x0 && sx <= l.x1 && sy >= l.y0 && sy <= l.y1);
+    return { sx, sy, mm: toMm(sx, sy), normX: c.x / map.width, normY: c.y / map.height, labelRoomId: hit?.roomId ?? null };
   };
 
   const draw = useCallback(() => {
@@ -137,7 +141,8 @@ export const MapView = forwardRef<MapViewApi, Props>(function MapView(props, ref
     drawOverlays(ctx, map, palette, toScreen, s, p.drawRestrictions ?? true);
     const api = apiRef.current;
     p.overlay?.({ ctx, api, palette, width: w, height: h });
-    if (p.showLabels ?? true) drawLabels(ctx, map, p.selectedRoomIds ?? [], p.focusRoomId ?? null, w, h, (nx, ny) => ({
+    labelHits.current = [];
+    if (p.showLabels ?? true) labelHits.current = drawLabels(ctx, map, p.selectedRoomIds ?? [], p.focusRoomId ?? null, w, h, (nx, ny) => ({
       x: w / 2 + (nx * map.width - v.cx) * s,
       y: h / 2 + (ny * map.height - v.cy) * s,
     }), dark);
@@ -367,7 +372,8 @@ function drawLabels(
   h: number,
   toScreen: (nx: number, ny: number) => { x: number; y: number },
   dark: boolean,
-): void {
+): LabelHit[] {
+  const hits: LabelHit[] = [];
   ctx.font = '600 11px Roboto, "Segoe UI", system-ui, sans-serif';
   ctx.textBaseline = 'middle';
   ctx.textAlign = 'center';
@@ -390,8 +396,13 @@ function drawLabels(
     ctx.fill();
     ctx.fillStyle = highlighted ? onPrimary : onSurface;
     ctx.fillText(text, p.x, p.y + 0.5);
+    hits.push({ roomId: room.id, x0: p.x - tw / 2 - padX, y0: p.y - boxH / 2, x1: p.x + tw / 2 + padX, y1: p.y + boxH / 2 });
   }
+  return hits;
 }
+
+/** Where a room's name was drawn, in screen pixels, so a click on it selects that room. */
+interface LabelHit { roomId: number; x0: number; y0: number; x1: number; y1: number }
 
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
   ctx.beginPath();

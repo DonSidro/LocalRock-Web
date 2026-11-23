@@ -130,3 +130,17 @@ describe('map transfer', () => {
     expect(Buffer.from(derived).equals(Buffer.from(real.grid))).toBe(true);
   });
 });
+
+describe('room name placement', () => {
+  it('keeps an L-shaped room\'s name on its own floor', async () => {
+    const { roomLabelCells } = await import('../server/map/legacy.js');
+    // An L: a 3-wide column along the left and a 3-high row along the bottom of a 12x12 image.
+    const w = 12, h = 12;
+    const roomAt = new Int32Array(w * h);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (x < 3 || y < 3) roomAt[y * w + x] = 5;
+    const [x, y] = roomLabelCells(roomAt, w, h).get(5)!;
+    expect(roomAt[y * w + x]).toBe(5);
+    // The plain average (about 4.4, 4.4) falls outside the L.
+    expect(roomAt[4 * w + 4]).toBe(0);
+  });
+});

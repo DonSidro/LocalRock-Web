@@ -236,6 +236,7 @@ function Overview({ duid, snap, map, tool, run, read, busy, selected, setSelecte
   const [draft, setDraft] = useState<Zone | null>(null);
   const [zoneTimes, setZoneTimes] = useState(1);
   const [zonesSent, setZonesSent] = useState(false);
+  const [selectedZone, setSelectedZone] = useState<number | null>(null);
   const [target, setTarget] = useState<[number, number] | null>(null);
   const [pinSent, setPinSent] = useState(false);
   const [obstacle, setObstacle] = useState<MapObstacle | null>(null);
@@ -267,7 +268,7 @@ function Overview({ duid, snap, map, tool, run, read, busy, selected, setSelecte
   };
   const clearTool = () => {
     if (tool === 'rooms') setSelected(() => []);
-    if (tool === 'zones') { setZones([]); setZonesSent(false); }
+    if (tool === 'zones') { setZones([]); setZonesSent(false); setSelectedZone(null); }
     if (tool === 'pin') { setTarget(null); setPinSent(false); }
   };
 
@@ -335,6 +336,19 @@ function Overview({ duid, snap, map, tool, run, read, busy, selected, setSelecte
                   };
                   zones.forEach((z) => drawZone(z, false));
                   if (draft) drawZone(draft, true);
+                  const sel = selectedZone !== null ? zones[selectedZone] : undefined;
+                  if (sel) {
+                    ctx.fillStyle = '#fff';
+                    ctx.strokeStyle = color;
+                    ctx.lineWidth = 2;
+                    for (const [x, y] of zoneCorners(sel)) {
+                      const c = api.toScreen(x, y);
+                      ctx.beginPath();
+                      ctx.arc(c.x, c.y, 6, 0, Math.PI * 2);
+                      ctx.fill();
+                      ctx.stroke();
+                    }
+                  }
                 }
                 if (tool === 'pin' && target) {
                   const p = api.toScreen(target[0], target[1]);
@@ -352,7 +366,7 @@ function Overview({ duid, snap, map, tool, run, read, busy, selected, setSelecte
                 const hit = tool !== 'zones' ? obstacleAt(mapApiRef.current, map.obstacles, p.sx, p.sy) : null;
                 if (hit) { setObstacle(hit); return; }
                 if (tool === 'rooms') {
-                  const room = roomAtNorm(map, p.normX, p.normY);
+                  const room = p.labelRoomId !== null ? map.rooms.find((r) => r.id === p.labelRoomId) : roomAtNorm(map, p.normX, p.normY);
                   if (room) toggleRoom(room.id);
                 } else if (tool === 'pin') {
                   setTarget(p.mm);
@@ -360,7 +374,34 @@ function Overview({ duid, snap, map, tool, run, read, busy, selected, setSelecte
                 }
               }}
               onPointerDown={(p) => {
-                if (tool !== 'zones' || zones.length >= MAX_ZONES) return null;
+                if (tool !== 'zones') return null;
+                // A drawn zone: a corner of the selected one resizes it, inside a zone moves it.
+                const api = mapApiRef.current;
+                const hitIndex = zones.findIndex((z) => p.mm[0] >= z.x1 && p.mm[0] <= z.x2 && p.mm[1] >= z.y1 && p.mm[1] <= z.y2);
+                const sel = selectedZone !== null ? zones[selectedZone] : undefined;
+                const corner = sel && api ? zoneCornerAt(sel, api, p.sx, p.sy) : null;
+                if (sel && corner && selectedZone !== null) {
+                  const index = selectedZone;
+                  const before = sel;
+                  return {
+                    move: (q) => setZones((zs) => zs.map((z, j) => (j === index ? resizeZone(before, corner, q.mm) : z))),
+                    end: (q) => { setZones((zs) => zs.map((z, j) => (j === index ? resizeZone(before, corner, q.mm) : z))); setZonesSent(false); },
+                    cancel: () => setZones((zs) => zs.map((z, j) => (j === index ? before : z))),
+                  };
+                }
+                if (hitIndex >= 0) {
+                  const before = zones[hitIndex]!;
+                  const [sx, sy] = p.mm;
+                  setSelectedZone(hitIndex);
+                  const moved = (q: { mm: [number, number] }) => moveZone(before, q.mm[0] - sx, q.mm[1] - sy);
+                  return {
+                    move: (q) => setZones((zs) => zs.map((z, j) => (j === hitIndex ? moved(q) : z))),
+                    end: (q) => { setZones((zs) => zs.map((z, j) => (j === hitIndex ? moved(q) : z))); setZonesSent(false); },
+                    cancel: () => setZones((zs) => zs.map((z, j) => (j === hitIndex ? before : z))),
+                  };
+                }
+                setSelectedZone(null);
+                if (zones.length >= MAX_ZONES) return null;
                 const [ax, ay] = p.mm;
                 const rect = (bx: number, by: number): Zone => ({ x1: Math.min(ax, bx), y1: Math.min(ay, by), x2: Math.max(ax, bx), y2: Math.max(ay, by) });
                 return {
@@ -369,7 +410,8 @@ function Overview({ duid, snap, map, tool, run, read, busy, selected, setSelecte
                     const z = rect(q.mm[0], q.mm[1]);
                     setDraft(null);
                     if (z.x2 - z.x1 >= MIN_ZONE_SIDE_MM && z.y2 - z.y1 >= MIN_ZONE_SIDE_MM) {
-                      setZones((zs) => [...zs, z]);
+                      // A new zone is selected straight away.
+                      setZones((zs) => { setSelectedZone(zs.length); return [...zs, z]; });
                       setZonesSent(false);
                     }
                   },
@@ -449,7 +491,7 @@ function Overview({ duid, snap, map, tool, run, read, busy, selected, setSelecte
                     <span className="zone-swatch" />
                     <span className="grow">Zone {i + 1}</span>
                     <span className="muted small">{((z.x2 - z.x1) / 1000).toFixed(1)} × {((z.y2 - z.y1) / 1000).toFixed(1)} m</span>
-                    <IconButton icon="close" label={`Remove zone ${i + 1}`} onClick={() => { setZones((zs) => zs.filter((_, j) => j !== i)); setZonesSent(false); }} />
+                    <IconButton icon="close" label={`Remove zone ${i + 1}`} onClick={() => { setZones((zs) => zs.filter((_, j) => j !== i)); setZonesSent(false); setSelectedZone(null); }} />
                   </li>
                 ))}
               </ul>
@@ -502,6 +544,29 @@ function StatusPanel({ snap, lastArea, duid }: { snap: VacuumSnapshot; lastArea:
     </Panel>
   );
 }
+
+/** The four corners of a zone, in robot mm. */
+const zoneCorners = (z: Zone): Array<[number, number]> => [[z.x1, z.y1], [z.x2, z.y1], [z.x2, z.y2], [z.x1, z.y2]];
+
+/** The corner of z under the pointer (screen px), as an index into zoneCorners. */
+function zoneCornerAt(z: Zone, api: MapViewApi, sx: number, sy: number): number | null {
+  const i = zoneCorners(z).findIndex(([x, y]) => { const c = api.toScreen(x, y); return (c.x - sx) ** 2 + (c.y - sy) ** 2 <= 14 ** 2; });
+  return i >= 0 ? i : null;
+}
+
+/**
+ * The zone with one corner dragged to p: the opposite corner stays put, a corner dragged past it flips
+ * the zone, and no side gets shorter than the 0.5 m a new zone needs.
+ */
+export function resizeZone(z: Zone, corner: number, p: [number, number]): Zone {
+  const [ox, oy] = zoneCorners(z)[(corner + 2) % 4]!;
+  let [px, py] = p;
+  if (Math.abs(px - ox) < MIN_ZONE_SIDE_MM) px = ox + (px >= ox ? MIN_ZONE_SIDE_MM : -MIN_ZONE_SIDE_MM);
+  if (Math.abs(py - oy) < MIN_ZONE_SIDE_MM) py = oy + (py >= oy ? MIN_ZONE_SIDE_MM : -MIN_ZONE_SIDE_MM);
+  return { x1: Math.min(ox, px), y1: Math.min(oy, py), x2: Math.max(ox, px), y2: Math.max(oy, py) };
+}
+
+export const moveZone = (z: Zone, dx: number, dy: number): Zone => ({ x1: z.x1 + dx, y1: z.y1 + dy, x2: z.x2 + dx, y2: z.y2 + dy });
 
 /** "8:34 PM" today, "Oct 21, 8:34 PM" another day; null when the time is missing or unreadable. */
 function lastKnownTime(iso: string | null): string | null {
@@ -781,6 +846,8 @@ function MapsDialog({ snap, busy, run, read, onClose }: { snap: VacuumSnapshot; 
   const [loading, setLoading] = useState(true);
   const [renaming, setRenaming] = useState<FloorMap | null>(null);
   const [deleting, setDeleting] = useState<FloorMap | null>(null);
+  const [backingUp, setBackingUp] = useState<FloorMap | null>(null);
+  const [restoring, setRestoring] = useState<FloorMap | null>(null);
   const [choosingKeep, setChoosingKeep] = useState(false);
   const recheck = async () => {
     setLoading(true);
@@ -859,12 +926,19 @@ function MapsDialog({ snap, busy, run, read, onClose }: { snap: VacuumSnapshot; 
                   const loaded = f.mapFlag === snap.currentFloorFlag;
                   return (
                     <tr key={f.mapFlag}>
-                      <td className="strong">{f.name}</td>
+                      <td>
+                        <div className="strong">{f.name}</div>
+                        <div className="muted tiny">{f.backupAt !== null ? `Backup ${robotTime(f.backupAt)}` : 'No backup'}</div>
+                      </td>
                       <td>{loaded && <span className="tag">Loaded</span>}</td>
                       <td>
                         <div className="row" style={{ justifyContent: 'flex-end', gap: 4 }}>
                           {floors.length > 1 && !loaded && (
                             <button type="button" className="btn secondary sm" disabled={busy} onClick={() => { onClose(); void run('switchFloor', { mapFlag: f.mapFlag }); }}>Load</button>
+                          )}
+                          <button type="button" className="btn ghost sm" disabled={!canManage} onClick={() => setBackingUp(f)}>Back up</button>
+                          {f.backupAt !== null && loaded && (
+                            <button type="button" className="btn ghost sm" disabled={!canManage} onClick={() => setRestoring(f)}>Restore</button>
                           )}
                           <IconButton icon="edit" label={`Rename ${f.name}`} disabled={!canManage} onClick={() => setRenaming(f)} />
                           <IconButton icon="delete" label={`Delete ${f.name}`} disabled={!canManage} onClick={() => setDeleting(f)} />
@@ -890,11 +964,37 @@ function MapsDialog({ snap, busy, run, read, onClose }: { snap: VacuumSnapshot; 
           onClose={() => setDeleting(null)}
         />
       )}
+      {backingUp && (
+        <ConfirmDialog
+          title={`Back up "${backingUp.name}"?`}
+          text={backingUp.backupAt !== null
+            ? `The robot keeps one backup per map, so this replaces the backup from ${robotTime(backingUp.backupAt)} with the map as it is now.`
+            : 'The robot keeps a copy of the map as it is now, with its rooms, zones, walls, carpets and thresholds, so you can go back to it later.'}
+          confirm="Back up"
+          onConfirm={() => void run('backupFloorMap', { mapFlag: backingUp.mapFlag }, 'Map backed up')}
+          onClose={() => setBackingUp(null)}
+        />
+      )}
+      {restoring && restoring.backupAt !== null && (
+        <ConfirmDialog
+          title={`Restore "${restoring.name}"?`}
+          text={`The map goes back to the backup from ${robotTime(restoring.backupAt)}. Everything changed on it since then, such as rooms, zones and walls, is lost.`}
+          confirm="Restore"
+          danger
+          onConfirm={() => void run('restoreFloorMapBackup', { mapFlag: restoring.mapFlag }, 'Map restored')}
+          onClose={() => setRestoring(null)}
+        />
+      )}
       {choosingKeep && floors.length > 0 && (
         <KeepMapDialog floors={floors} current={snap.currentFloorFlag} onClose={() => setChoosingKeep(false)} onKeep={(keep) => void run('setMultiLevel', { enabled: false, keepMapFlag: keep }, 'Multi-level maps off')} />
       )}
     </Modal>
   );
+}
+
+/** A time from the robot's own clock (epoch seconds), as a short local date and time. */
+function robotTime(epochSeconds: number): string {
+  return new Date(epochSeconds * 1000).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 }
 
 function RenameMapDialog({ floor, onRename, onClose }: { floor: FloorMap; onRename: (name: string) => void; onClose: () => void }) {

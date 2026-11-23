@@ -58,6 +58,8 @@ export class SimRobot {
   private pathIndex = 0;
   private roomTable: Array<[number, string, number]> = [];
   private maps: Array<{ mapFlag: number; name: string }> = [{ mapFlag: 0, name: 'Home' }];
+  private savedAt = new Map<number, number>();
+  private backups = new Map<number, number>();
   private sequence: number[] = [];
   private roomModes: Array<Record<string, number>> = [];
   private timers: Array<{ id: string; on: boolean; cron: string }> = [{ id: '1700000000', on: true, cron: '0 9 * * 1,2,3,4,5' }];
@@ -429,7 +431,22 @@ export class SimRobot {
       case 'set_dnd_timer': Object.assign(this.dnd, p0, { enabled: 1 }); return respond(ok);
       case 'close_dnd_timer': this.dnd.enabled = 0; return respond(ok);
       case 'get_multi_maps_list':
-        return respond({ result: [{ max_multi_map: 4, max_bak_map: 1, multi_map_count: this.maps.length, map_info: this.maps.map((m) => ({ ...m, add_time: 1760000000, length: m.name.length, bak_maps: [] })) }] });
+        return respond({ result: [{ max_multi_map: 4, max_bak_map: 1, multi_map_count: this.maps.length, map_info: this.maps.map((m) => ({
+          mapFlag: m.mapFlag, name: m.name, add_time: this.savedAt.get(m.mapFlag) ?? 1760000000, length: m.name.length,
+          bak_maps: this.backups.has(m.mapFlag) ? [{ mapFlag: m.mapFlag, add_time: this.backups.get(m.mapFlag)! }] : [],
+        })) }] });
+      case 'manual_bak_map': {
+        const flag = (params as Record<string, number>)['map_flag']!;
+        if (!this.maps.some((m) => m.mapFlag === flag)) return respond({ error: { code: -10007, message: 'no such map' } });
+        this.backups.set(flag, Math.floor(Date.now() / 1000) + this.backups.size);
+        return respond(ok);
+      }
+      case 'recover_multi_map': {
+        const flag = (params as Record<string, number>)['map_flag']!;
+        if (!this.backups.has(flag)) return respond({ error: { code: -10007, message: 'no backup' } });
+        this.savedAt.set(flag, Math.floor(Date.now() / 1000));
+        return later(ok);
+      }
       case 'name_multi_map': {
         const e = p0 as Record<string, unknown>;
         const m = this.maps.find((x) => x.mapFlag === e['multi_map']);
