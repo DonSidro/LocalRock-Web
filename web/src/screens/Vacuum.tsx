@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  ACTIVE_STATES, DockErrorCodes, FanPower, MopRoute, State, SWITCH_MAP_MODE_SMART, WaterBoxMode, isCustomizeModeSet,
-  isSmartModeSet, mapNameBlocker, mapSavingEnabled, multiLevelEnabled, normalizeWaterMode, roomCleanModesFor,
+  ACTIVE_STATES, DockErrorCodes, FanPower, MopRoute, State, SWITCH_MAP_MODE_SMART, WaterBoxMode, isCleanEfficiencySupported,
+  describeError, describeState, isCustomizeModeSet, isSmartModeSet, isVacuumThenMopRepeatSupported, isVacuumThenMopSupported, mapNameBlocker, mapSavingEnabled, multiLevelEnabled, normalizeWaterMode, roomCleanModesFor,
   type RoomCleanMode,
 } from '../../../shared/codes';
 import type { FloorMap, VacuumSnapshot } from '../../../shared/api';

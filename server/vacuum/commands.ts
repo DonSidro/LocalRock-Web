@@ -1,5 +1,6 @@
 import { NEW_RECT_CARPET_FLAGS, MAX_MAP_COORD_MM, MAX_RESTRICTION_VERTICES, restrictionVertexCount, type MapZone, type VirtualWall } from '../../shared/map.js';
-import { FanPower, WaterBoxMode, mapNameBlocker, normalizeWaterMode, type RoomCleanMode } from '../../shared/codes.js';
+import { FanPower, WaterBoxMode, isCustomizeModeSet, isSmartModeSet, mapNameBlocker, normalizeWaterMode, type RoomCleanMode } from '../../shared/codes.js';
+import type { SmartWashSettings } from '../../shared/dock.js';
 import { mapIndexBlocker } from '../../shared/mapEdit.js';
 import { asInt, errorCode, isObject, type V1Response } from '../protocol/envelope.js';
 import { JsonDouble, type JsonValue } from '../protocol/json.js';
@@ -97,12 +98,95 @@ export const getCarpetCleanMode = (s: VacuumSession) => s.sendCommand('get_carpe
 /** A bare object like the official app; a Curv 2 Flow refuses the list form ("param is not an object"). */
 export const setCarpetCleanMode = (s: VacuumSession, mode: number) => s.sendCommandRaw('set_carpet_clean_mode', { carpet_clean_mode: mode });
 export const getWashTowelMode = (s: VacuumSession) => s.sendCommand('get_wash_towel_mode');
-export const setWashTowelMode = (s: VacuumSession, mode: number) => s.sendCommand('set_wash_towel_mode', [{ wash_mode: mode }]);
+export const setWashTowelMode = (s: VacuumSession, mode: number) => s.sendCommandRaw('set_wash_towel_mode', { wash_mode: mode });
 export const getSmartWashParams = (s: VacuumSession) => s.sendCommand('get_smart_wash_params');
-export const setSmartWashParams = (s: VacuumSession, washFreq: number) =>
-  s.sendCommand('set_smart_wash_params', [{ smart_wash: 0, wash_interval: washFreq + 1 }]);
+export const setSmartWashParams = (s: VacuumSession, settings: SmartWashSettings) =>
+  s.sendCommandRaw('set_smart_wash_params', { smart_wash: settings.mode, wash_interval: settings.intervalSeconds });
+
+/** {"smart_wash": mode, "wash_interval": seconds}; null without a positive interval. */
+export function parseSmartWashSettings(result: unknown): SmartWashSettings | null {
+  const o = Array.isArray(result) ? result[0] : result;
+  if (!isObject(o)) return null;
+  const mode = asInt(o['smart_wash']);
+  const interval = asInt(o['wash_interval']);
+  return mode !== null && interval !== null && interval > 0 ? { mode, intervalSeconds: interval } : null;
+}
+
+export const getInitStatus = (s: VacuumSession) => s.sendCommand('app_get_init_status');
+export const robotSettingReadParams = (name: string): JsonValue => ({ name });
+export const robotSettingWriteParams = (name: string, status: number): JsonValue => ({ name, status });
+export const getRobotSetting = (s: VacuumSession, name: string) => s.sendCommandRaw('app_get_robot_setting', robotSettingReadParams(name));
+export const setRobotSetting = (s: VacuumSession, name: string, status: number) => s.sendCommandRaw('app_set_robot_setting', robotSettingWriteParams(name, status));
+
+/** The Matter commands and the pet search take an empty object, not an empty list. */
+export const getMatterStatus = (s: VacuumSession) => s.sendCommandRaw('matter.get_status', {});
+export const downloadMatterKey = (s: VacuumSession) => s.sendCommandRaw('matter.dnld_key', {});
+export const resetMatter = (s: VacuumSession) => s.sendCommandRaw('matter.reset', {});
+/** Find my pet: the robot goes looking and reports found or not found as an event. */
+export const startPetSearch = (s: VacuumSession) => s.sendCommandRaw('app_start_pet_patrol', {});
+
+/** The robot's own OTA commands; both take an empty list. */
+export const getOtaState = (s: VacuumSession, timeoutMs?: number) => s.sendCommandRaw('get_ota_state', [], timeoutMs ? { timeoutMs } : {});
+export const getOtaProgress = (s: VacuumSession) => s.sendCommandRaw('get_ota_progress', []);
+
+/** {"ota_state": "idle|downloading|installing|wait_install|failed"}. */
+export function parseOtaState(result: unknown): string | null {
+  const o = Array.isArray(result) ? result[0] : result;
+  return isObject(o) && typeof o['ota_state'] === 'string' ? o['ota_state'] : null;
+}
+
+/** {"ota_progress": 0..100}; the robot answers 0 while it installs. */
+export function parseOtaProgress(result: unknown): number | null {
+  const o = Array.isArray(result) ? result[0] : result;
+  return isObject(o) ? asInt(o['ota_progress']) : null;
+}
+
+export const getVoiceServiceSwitch = (s: VacuumSession) => s.sendCommand('get_voice_service_switch');
+export const setVoiceServiceSwitch = (s: VacuumSession, params: JsonValue) => s.sendCommandRaw('set_voice_service_switch', params);
+export const getCurrentSound = (s: VacuumSession) => s.sendCommand('get_current_sound');
+export const getVoiceHistorySummary = (s: VacuumSession) => s.sendCommand('get_voice_history_summary');
+export const getVoiceHistory = (s: VacuumSession, minId: number, maxId: number) => s.sendCommandRaw('get_voice_history', { min_id: minId, max_id: maxId });
+export const getSoundProgress = (s: VacuumSession) => s.sendCommand('get_sound_progress');
+/** The robot downloads the pack from params.url itself, so the URL must be reachable from the robot. */
+export const installSound = (s: VacuumSession, params: JsonValue) => s.sendCommandRaw('dnld_install_sound', params);
+
+export const getDryerSetting = (s: VacuumSession) => s.sendCommand('app_get_dryer_setting');
+export const setDryerSetting = (s: VacuumSession, body: Record<string, JsonValue>) => s.sendCommandRaw('app_set_dryer_setting', body);
+
+/**
+ * The body for app_set_dryer_setting: the answer the robot gave with only `status`, and `on.dry_time`
+ * when given, changed. The answer carries more than those two, and it is not known whether the robot
+ * merges a shorter body or replaces what it holds, so everything it reported is sent back.
+ */
+export function dryerSettingBody(reported: Record<string, JsonValue> | null, enabled: boolean, dryTimeSeconds: number | null): Record<string, JsonValue> {
+  const body: Record<string, JsonValue> = { ...(reported ?? {}) };
+  body['status'] = enabled ? 1 : 0;
+  if (dryTimeSeconds !== null) {
+    const prevOn = reported?.['on'];
+    const on: Record<string, JsonValue> = isObject(prevOn) ? { ...(prevOn as Record<string, JsonValue>) } : {};
+    on['dry_time'] = dryTimeSeconds;
+    body['on'] = on;
+  }
+  return body;
+}
+
+/** The read answers {"wash_water_temperature": n}, where the setter takes {"values": n}. */
+export const getWashWaterTemperature = (s: VacuumSession) => s.sendCommand('get_wash_water_temperature');
+export const setWashWaterTemperature = (s: VacuumSession, value: number) => s.sendCommandRaw('set_wash_water_temperature', { values: value });
+
+export const getValleyElectricityTimer = (s: VacuumSession) => s.sendCommand('get_valley_electricity_timer');
+export const setValleyElectricityTimer = (s: VacuumSession, sh: number, sm: number, eh: number, em: number) =>
+  s.sendCommand('set_valley_electricity_timer', [sh, sm, eh, em]);
+export const closeValleyElectricityTimer = (s: VacuumSession) => s.sendCommand('close_valley_electricity_timer');
+
+/**
+ * Drains the robot's built-in water tank through the dock (captured on a Qrevo Pro, fw 02.15.26:
+ * the robot answers ["ok"] and goes from state 8 to 23). The parameter is an empty object.
+ */
+export const APP_EMPTY_INBUILT_WATER_TANK = 'app_empty_inbuilt_water_tank';
+export const emptyInbuiltWaterTank = (s: VacuumSession) => s.sendCommandRaw(APP_EMPTY_INBUILT_WATER_TANK, {});
 export const getDustCollectionMode = (s: VacuumSession) => s.sendCommand('get_dust_collection_mode');
-export const setDustCollectionMode = (s: VacuumSession, mode: number) => s.sendCommand('set_dust_collection_mode', [{ mode }]);
+export const setDustCollectionMode = (s: VacuumSession, mode: number) => s.sendCommandRaw('set_dust_collection_mode', { mode });
 export const getDndTimer = (s: VacuumSession) => s.sendCommand('get_dnd_timer');
 export const setDndTimer = (s: VacuumSession, sh: number, sm: number, eh: number, em: number) =>
   s.sendCommand('set_dnd_timer', [{ start_hour: sh, start_minute: sm, end_hour: eh, end_minute: em }]);

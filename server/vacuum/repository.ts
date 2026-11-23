@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events';
 import {
   ACTIVE_STATES, CLEANING_STATES, LAB_STATUS_MAP_SAVING, LAB_STATUS_MULTI_LEVEL, STATUS_FIELDS, State,
   SWITCH_MAP_MODE_MANUAL, SWITCH_MAP_MODE_SMART, UNSAVED_MAP_FLAG, describeDockError, describeError, loadedMapFlag,
-  mapNameBlocker, mapSavingEnabled, multiLevelEnabled, unsavedMapPresent, type RoomCleanMode, type VacuumStatus,
+  isDockedAndIdle, isSmartPlanSupported, isWaterSlideSupported, mapNameBlocker, mapSavingEnabled, multiLevelEnabled, unsavedMapPresent, type RoomCleanMode, type VacuumStatus,
 } from '../../shared/codes.js';
 import { FloorMaterial, isRoundCarpet, type MapZone, type ParsedMap, type VirtualWall } from '../../shared/map.js';
 import { editBlockedReason, mapIndexBlocker, restrictionSaveBlocker, saveMapIndex } from '../../shared/mapEdit.js';
@@ -32,6 +32,9 @@ const NOT_CONFIRMED = 'The robot accepted the change, but the map does not show 
 const ROOM_MODES_NOT_CONFIRMED = 'The robot accepted the room settings, but does not report them back. Open the cleaning mode again to check.';
 const MAP_NOT_KEPT = 'Map saving is now on, but the robot did not keep the map it had built. Let it clean or map the home once more, then save the map.';
 const BUSY = 'The robot is busy. Dock it or let it finish first.';
+const EMPTY_DOCK_SETTINGS: DockSettings = {
+  washMode: null, smartWash: null, autoEmptyMode: null, mopDrying: null, dryTimeSeconds: null, washWaterTemperature: null,
+};
 
 const STATUS_POLL_MS = 5_000;
 const MONITOR_ACTIVE_POLL_MS = 10_000;
@@ -368,6 +371,8 @@ export class VacuumRepository extends EventEmitter {
       timers: this.timers,
       robotSettings: this.robotSettings,
       dockSettings: this.dockSettings,
+      valley: this.valley,
+      roomTags: this.roomTags(),
       dnd: this.dnd,
       defaultCleanOrder: this.deps.cleanOrder(this.currentFloorFlag()),
     };
@@ -596,16 +601,48 @@ export class VacuumRepository extends EventEmitter {
     this.cleanSequenceRefused = false;
   }
 
-  pause = () => C.appPause(this.deps.session).then(() => undefined);
-  stop = () => C.appStop(this.deps.session).then(() => undefined);
-  dock = () => C.appCharge(this.deps.session).then(() => undefined);
-  setFanPower = (level: number) => C.setCustomMode(this.deps.session, level).then(() => undefined);
-  setWaterBoxMode = (level: number) => C.setWaterBoxCustomMode(this.deps.session, level).then(() => undefined);
-  collectDust = () => C.appStartCollectDust(this.deps.session).then(() => undefined);
-  washMop = () => C.appStartWash(this.deps.session).then(() => undefined);
-  stopWash = () => C.appStopWash(this.deps.session).then(() => undefined);
-  startDryer = () => C.appSetDryerStatus(this.deps.session, true).then(() => undefined);
-  stopDryer = () => C.appSetDryerStatus(this.deps.session, false).then(() => undefined);
+  pause = () => C.appPause(this.deps.session).then((r) => { C.requireOk(r, 'app_pause'); });
+  stop = () => C.appStop(this.deps.session).then((r) => { C.requireOk(r, 'app_stop'); });
+  dock = () => C.appCharge(this.deps.session).then((r) => { C.requireOk(r, 'app_charge'); });
+
+  /** Resume the robot's own paused task: a full clean, a zone clean or a room clean (app 1.4.0). */
+  async resume(): Promise<void> {
+    const fresh = await this.getStatus();
+    if (!fresh) throw new MapEditError("The robot's current task is unavailable");
+    this.applyStatus(mergeStatus(this.status, fresh));
+    const method = fresh.inCleaning === 2 ? 'resume_zoned_clean' : fresh.inCleaning === 3 ? 'resume_segment_clean' : 'app_start';
+    C.requireOk(await this.deps.session.sendCommand(method), method);
+  }
+  async setFanPower(level: number): Promise<void> {
+    await this.setOneMotorMode('set_custom_mode', await C.setCustomMode(this.deps.session, level), (m) => ({ ...m, fan: level }));
+  }
+
+  async setWaterBoxMode(level: number): Promise<void> {
+    await this.setOneMotorMode('set_water_box_custom_mode', await C.setWaterBoxCustomMode(this.deps.session, level), (m) => ({ ...m, water: level }));
+  }
+
+  /**
+   * Checks the robot's answer to a single suction, water or route change. On -10005 the change is
+   * sent again as one set_clean_motor_mode with the other two as the robot reports them now (see
+   * motorModesForFallback); a refusal that can't be retried, or a refused retry, is raised.
+   */
+  private async setOneMotorMode(method: string, answer: V1Response, change: (m: C.MotorModes) => C.MotorModes): Promise<void> {
+    if (!answer.error) return;
+    const code = errorCode(answer.error);
+    if (code === C.PARAM_FORMAT_REFUSED_CODE) {
+      await this.refreshStatus();
+      await this.fetchMopMode();
+    }
+    const modes = C.motorModesForFallback(code, this.status.fanPower, this.status.waterBoxCustomMode, this.mopMode);
+    if (!modes) throw new RobotCommandError(method, answer.error);
+    const wanted = change(modes);
+    await this.setCleanMotorMode(wanted.fan, wanted.water, wanted.mop);
+  }
+  collectDust = () => C.appStartCollectDust(this.deps.session).then((r) => { C.requireOk(r, 'app_start_collect_dust'); });
+  washMop = () => C.appStartWash(this.deps.session).then((r) => { C.requireOk(r, 'app_start_wash'); });
+  stopWash = () => C.appStopWash(this.deps.session).then((r) => { C.requireOk(r, 'app_stop_wash'); });
+  startDryer = () => C.appSetDryerStatus(this.deps.session, true).then((r) => { C.requireOk(r, 'app_set_dryer_status'); });
+  stopDryer = () => C.appSetDryerStatus(this.deps.session, false).then((r) => { C.requireOk(r, 'app_set_dryer_status'); });
   findMe = () => C.findMe(this.deps.session).then(() => undefined);
   rcStart = () => C.appRcStart(this.deps.session).then(() => undefined);
   rcEnd = () => C.appRcEnd(this.deps.session).then(() => undefined);
@@ -790,32 +827,111 @@ export class VacuumRepository extends EventEmitter {
 
   async fetchDockSettings(): Promise<void> {
     const s = this.deps.session;
-    const quietly = async <T>(f: () => Promise<T>): Promise<T | null> => { try { return await f(); } catch { return null; } };
-    const wash = intField(firstObject((await quietly(() => C.getWashTowelMode(s)))?.result), 'wash_mode');
-    if (wash !== null) this.dockSettings = { ...this.dockSettings, washMode: wash };
-    const interval = intField(firstObject((await quietly(() => C.getSmartWashParams(s)))?.result), 'wash_interval');
-    if (interval !== null) this.dockSettings = { ...this.dockSettings, washFreq: Math.max(0, interval - 1) };
-    const dust = intField(firstObject((await quietly(() => C.getDustCollectionMode(s)))?.result), 'mode');
-    if (dust !== null) this.dockSettings = { ...this.dockSettings, autoEmptyMode: dust };
+    const answer = async (method: string, f: () => Promise<V1Response>): Promise<Record<string, unknown> | null> => {
+      try { return firstObject(C.requireOk(await f(), method).result); } catch { return null; }
+    };
+    const wash = await answer('get_wash_towel_mode', () => C.getWashTowelMode(s));
+    let smartWash = null;
+    try { smartWash = C.parseSmartWashSettings(C.requireOk(await C.getSmartWashParams(s), 'get_smart_wash_params').result); } catch { /* not offered */ }
+    const empty = await answer('get_dust_collection_mode', () => C.getDustCollectionMode(s));
+    const dryer = await answer('app_get_dryer_setting', () => C.getDryerSetting(s));
+    const temperature = await answer('get_wash_water_temperature', () => C.getWashWaterTemperature(s));
+    const dryStatus = dryer ? asInt(dryer['status']) : null;
+    const on = dryer && isObject(dryer['on']) ? dryer['on'] as Record<string, unknown> : null;
+    this.dryerAnswer = dryStatus !== null ? dryer as Record<string, JsonValue> : null;
+    this.dockSettings = {
+      washMode: wash ? asInt(wash['wash_mode']) : null,
+      smartWash,
+      autoEmptyMode: empty ? asInt(empty['mode']) : null,
+      mopDrying: dryStatus === null ? null : dryStatus === 1,
+      dryTimeSeconds: dryStatus === null || !on ? null : asInt(on['dry_time']),
+      washWaterTemperature: temperature ? asInt(temperature['wash_water_temperature']) : null,
+    };
     this.changed();
   }
 
   async setWashMode(mode: number): Promise<void> {
-    await C.setWashTowelMode(this.deps.session, mode);
+    C.requireOk(await C.setWashTowelMode(this.deps.session, mode), 'set_wash_towel_mode');
     this.dockSettings = { ...this.dockSettings, washMode: mode };
     this.changed();
   }
 
-  async setWashFreq(freq: number): Promise<void> {
-    await C.setSmartWashParams(this.deps.session, freq);
-    this.dockSettings = { ...this.dockSettings, washFreq: freq };
+  async setWashFrequency(mode: number, intervalMinutes: number | null): Promise<void> {
+    // Room and smart modes still carry an interval, so the robot's current one is kept.
+    const current = C.parseSmartWashSettings(C.requireOk(await C.getSmartWashParams(this.deps.session), 'get_smart_wash_params').result);
+    if (!current) throw new UserError("The robot's mop washing frequency is unavailable");
+    let updated;
+    try { updated = withWashFrequency(current, mode, intervalMinutes); } catch (e) { throw new UserError((e as Error).message); }
+    C.requireOk(await C.setSmartWashParams(this.deps.session, updated), 'set_smart_wash_params');
+    this.dockSettings = { ...this.dockSettings, smartWash: updated };
     this.changed();
   }
 
   async setAutoEmptyMode(mode: number): Promise<void> {
-    await C.setDustCollectionMode(this.deps.session, mode);
+    C.requireOk(await C.setDustCollectionMode(this.deps.session, mode), 'set_dust_collection_mode');
     this.dockSettings = { ...this.dockSettings, autoEmptyMode: mode };
     this.changed();
+  }
+
+  async setMopDrying(enabled: boolean): Promise<void> {
+    // Sends back everything the robot reported, so the switch alone cannot change how long a run lasts.
+    const reported = this.dryerAnswer;
+    const body = C.dryerSettingBody(reported, enabled, reported === null ? this.dockSettings.dryTimeSeconds : null);
+    C.requireOk(await C.setDryerSetting(this.deps.session, body), 'app_set_dryer_setting');
+    this.dryerAnswer = body;
+    this.dockSettings = { ...this.dockSettings, mopDrying: enabled };
+    this.changed();
+  }
+
+  async setDryTime(seconds: number): Promise<void> {
+    const body = C.dryerSettingBody(this.dryerAnswer, this.dockSettings.mopDrying ?? true, seconds);
+    C.requireOk(await C.setDryerSetting(this.deps.session, body), 'app_set_dryer_setting');
+    this.dryerAnswer = body;
+    this.dockSettings = { ...this.dockSettings, dryTimeSeconds: seconds };
+    this.changed();
+  }
+
+  async setWashWaterTemperature(value: number): Promise<void> {
+    C.requireOk(await C.setWashWaterTemperature(this.deps.session, value), 'set_wash_water_temperature');
+    this.dockSettings = { ...this.dockSettings, washWaterTemperature: value };
+    this.changed();
+  }
+
+  /** Pumps the robot's built-in water tank out through the dock. A refusal is raised, not ignored. */
+  async emptyInbuiltWaterTank(): Promise<void> {
+    const fresh = await this.getStatus();
+    if (!fresh) throw new UserError("The robot's current status is unavailable");
+    this.applyStatus(mergeStatus(this.status, fresh));
+    if (!isDockedAndIdle(fresh)) throw new UserError('Dock the robot and finish its current task before emptying its water tank');
+    C.requireOk(await C.emptyInbuiltWaterTank(this.deps.session), C.APP_EMPTY_INBUILT_WATER_TANK);
+  }
+
+  async fetchValley(): Promise<void> {
+    let o: Record<string, unknown> | null = null;
+    try { o = firstObject(C.requireOk(await C.getValleyElectricityTimer(this.deps.session), 'get_valley_electricity_timer').result); } catch { /* not offered */ }
+    if (!o) return;
+    this.valley = {
+      enabled: intField(o, 'enabled') === 1,
+      startHour: intField(o, 'start_hour') ?? 22,
+      startMinute: intField(o, 'start_minute') ?? 0,
+      endHour: intField(o, 'end_hour') ?? 6,
+      endMinute: intField(o, 'end_minute') ?? 0,
+    };
+    this.changed();
+  }
+
+  async setValley(sh: number, sm: number, eh: number, em: number): Promise<void> {
+    C.requireOk(await C.setValleyElectricityTimer(this.deps.session, sh, sm, eh, em), 'set_valley_electricity_timer');
+    this.valley = { enabled: true, startHour: sh, startMinute: sm, endHour: eh, endMinute: em };
+    this.changed();
+  }
+
+  async disableValley(): Promise<void> {
+    C.requireOk(await C.closeValleyElectricityTimer(this.deps.session), 'close_valley_electricity_timer');
+    if (this.valley) this.valley = { ...this.valley, enabled: false };
+    this.changed();
+  }
+
   }
 
   async fetchDnd(): Promise<void> {

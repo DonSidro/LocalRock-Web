@@ -50,13 +50,27 @@ export interface RobotSettings {
   carpetMode: number;
 }
 
+/** Dock settings as the robot reported them; null where it did not answer. */
 export interface DockSettings {
-  /** 0 light, 1 standard, 2 intensive */
-  washMode: number;
-  /** 0 every time, 1 every 2, 2 every 3 */
-  washFreq: number;
-  /** 0 smart, 1 max, 2 normal */
-  autoEmptyMode: number;
+  /** set_wash_towel_mode's wash_mode; see DockCapabilities.washModes. */
+  washMode: number | null;
+  smartWash: SmartWashSettings | null;
+  /** set_dust_collection_mode's mode: 0 smart, 1 light, 2 balanced, 3 strong, 4 max. */
+  autoEmptyMode: number | null;
+  /** app_get_dryer_setting's status; null on a dock without drying. */
+  mopDrying: boolean | null;
+  dryTimeSeconds: number | null;
+  /** 0 room temperature, 1 warm, 2 hot; null on a dock without heating. */
+  washWaterTemperature: number | null;
+}
+
+/** The off-peak electricity window the robot is limited to, in the robot's local time. */
+export interface ValleySettings {
+  enabled: boolean;
+  startHour: number;
+  startMinute: number;
+  endHour: number;
+  endMinute: number;
 }
 
 export interface DndSettings {

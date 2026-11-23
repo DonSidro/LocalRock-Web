@@ -60,9 +60,19 @@ export const CALLS: Record<string, Call> = {
   startDryer: action((repo) => repo.startDryer()),
   stopDryer: action((repo) => repo.stopDryer()),
   fetchDockSettings: read((repo) => repo.fetchDockSettings()),
-  setWashMode: action((repo, a) => repo.setWashMode(int(a['mode'], 'washing mode', 0, 2))),
-  setWashFreq: action((repo, a) => repo.setWashFreq(int(a['freq'], 'wash frequency', 0, 2))),
-  setAutoEmptyMode: action((repo, a) => repo.setAutoEmptyMode(int(a['mode'], 'auto-empty mode', 0, 2))),
+  setWashMode: action((repo, a) => repo.setWashMode(oneOf(a['mode'], 'washing mode', [0, 1, 2, 8, 10] as const))),
+  setWashFrequency: action((repo, a) => repo.setWashFrequency(
+    int(a['mode'], 'wash frequency', 0, 2),
+    a['intervalMinutes'] === null || a['intervalMinutes'] === undefined ? null : int(a['intervalMinutes'], 'wash interval', 10, 50),
+  )),
+  setAutoEmptyMode: action((repo, a) => repo.setAutoEmptyMode(oneOf(a['mode'], 'auto-empty mode', [0, 1, 2, 3, 4] as const))),
+  setMopDrying: action((repo, a) => repo.setMopDrying(bool(a['enabled'], 'mop drying'))),
+  setDryTime: action((repo, a) => repo.setDryTime(int(a['seconds'], 'drying time', 1800, 6 * 3600))),
+  setWashWaterTemperature: action((repo, a) => repo.setWashWaterTemperature(int(a['value'], 'water temperature', 0, 2))),
+  emptyInbuiltWaterTank: action((repo) => repo.emptyInbuiltWaterTank()),
+  fetchValley: read((repo) => repo.fetchValley()),
+  setValley: action((repo, a) => repo.setValley(int(a['startHour'], 'hour', 0, 23), int(a['startMinute'], 'minute', 0, 59), int(a['endHour'], 'hour', 0, 23), int(a['endMinute'], 'minute', 0, 59))),
+  disableValley: action((repo) => repo.disableValley()),
 
   fetchConsumables: read((repo) => repo.fetchConsumables()),
   resetConsumable: action(async (repo, a) => {

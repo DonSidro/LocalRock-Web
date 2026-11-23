@@ -67,7 +67,7 @@ export class SimRobot {
   constructor(readonly config: RobotConfig) {
     this.status = {
       battery: 100, state: 8, fan_power: 102, water_box_mode: 201, clean_area: 0, clean_time: 0, error_code: 0,
-      water_box_status: 1, charge_status: 1, dock_error_status: 0, dry_status: 0, rdt: 0,
+      water_box_status: 1, charge_status: 1, dock_error_status: 0, dock_type: 8, dss: 2, dry_status: 0, rdt: 0, seq_type: 0,
       map_status: 3, lab_status: 1, switch_map_mode: 1, in_cleaning: 0, clean_percent: 0,
     };
     if (config.format === 'legacy') {
@@ -255,8 +255,30 @@ export class SimRobot {
         return respond(ok);
       case 'get_wash_towel_mode': return respond({ result: { wash_mode: this.settings.wash } });
       case 'set_wash_towel_mode': this.settings.wash = (p0 as Record<string, number>)['wash_mode']!; return respond(ok);
-      case 'get_smart_wash_params': return respond({ result: { smart_wash: 0, wash_interval: this.settings.washInterval } });
-      case 'set_smart_wash_params': this.settings.washInterval = (p0 as Record<string, number>)['wash_interval']!; return respond(ok);
+      case 'get_smart_wash_params': return respond({ result: { smart_wash: this.settings.smartWash, wash_interval: this.settings.washInterval } });
+      case 'set_smart_wash_params': {
+        const w = p0 as Record<string, number>;
+        this.settings.smartWash = w['smart_wash']!;
+        this.settings.washInterval = w['wash_interval']!;
+        return respond(ok);
+      }
+      case 'app_get_dryer_setting': return respond({ result: this.dryer });
+      case 'app_set_dryer_setting': this.dryer = p0 as Record<string, unknown>; return respond(ok);
+      case 'get_wash_water_temperature': return respond({ result: { wash_water_temperature: this.settings.waterTemp } });
+      case 'set_wash_water_temperature': this.settings.waterTemp = (p0 as Record<string, number>)['values']!; return respond(ok);
+      case 'get_valley_electricity_timer': return respond({ result: [this.valley] });
+      case 'set_valley_electricity_timer': {
+        const [sh, sm, eh, em] = params as number[];
+        this.valley = { enabled: 1, start_hour: sh!, start_minute: sm!, end_hour: eh!, end_minute: em! };
+        return respond(ok);
+      }
+      case 'close_valley_electricity_timer': this.valley.enabled = 0; return respond(ok);
+      case 'app_empty_inbuilt_water_tank': {
+        if (s['in_cleaning'] !== 0 || (s['state'] !== 8 && s['state'] !== 100)) return respond({ error: { code: -10007, message: 'busy' } });
+        this.returnAt = Date.now() + 6_000;
+        this.setState(23);
+        return respond(ok);
+      }
       case 'get_dust_collection_mode': return respond({ result: { mode: this.settings.dust } });
       case 'set_dust_collection_mode': this.settings.dust = (p0 as Record<string, number>)['mode']!; return respond(ok);
       case 'get_dnd_timer': return respond({ result: [this.dnd] });

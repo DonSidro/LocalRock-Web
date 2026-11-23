@@ -16,6 +16,10 @@ export interface VacuumStatus {
   waterBoxCustomMode?: number;
   chargeStatus?: number;
   dockErrorStatus?: number;
+  /** Which dock the robot sits on (DockCapabilities); 0 or missing without a dock. */
+  dockType?: number;
+  /** `dss` on the wire: dock state bits; the low two report the plumbing module. */
+  dockStatus?: number;
   dryStatus?: number;
   /** `rdt` on the wire: seconds of mop drying left. */
   remainingDryTimeSec?: number;
@@ -43,6 +47,8 @@ export const STATUS_FIELDS: Record<keyof VacuumStatus, string> = {
   waterBoxCustomMode: 'water_box_mode',
   chargeStatus: 'charge_status',
   dockErrorStatus: 'dock_error_status',
+  dockType: 'dock_type',
+  dockStatus: 'dss',
   dryStatus: 'dry_status',
   remainingDryTimeSec: 'rdt',
   mapStatus: 'map_status',
@@ -80,6 +86,12 @@ export function loadedMapFlag(s: VacuumStatus): number | undefined {
 export function unsavedMapPresent(s: VacuumStatus): boolean {
   return loadedMapFlag(s) === UNSAVED_MAP_FLAG && s.mapStatus !== undefined && (s.mapStatus & MAP_STATUS_PRESENT) !== 0;
 }
+
+/** True when the robot sits on its dock and is not in the middle of a clean. */
+export function isDockedAndIdle(s: VacuumStatus): boolean {
+  return s.inCleaning === 0 && (s.state === State.CHARGING || s.state === State.CHARGING_COMPLETE);
+}
+
 
 export const DockErrorCodes = {
   OK: 0,

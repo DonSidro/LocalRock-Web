@@ -187,11 +187,11 @@ export function RobotSettingsTab({ snap, rooms, actions }: { snap: VacuumSnapsho
   useEffect(() => {
     void read('fetchRobotSettings');
     void read('fetchDockSettings');
+    void read('fetchValley');
     void read('fetchDnd');
   }, [read]);
   const r = snap.robotSettings;
-  const d = snap.dockSettings;
-  const volume = VOLUMES.reduce((best, [v]) => (Math.abs(v - r.volume) < Math.abs(best - r.volume) ? v : best), VOLUMES[0]![0]);
+  const volume = r.volume <= 0 ? 0 : VOLUMES.slice(1).reduce((best, [v]) => (Math.abs(v - r.volume) < Math.abs(best - r.volume) ? v : best), VOLUMES[1]![0]);
   const jump = (id: string) => document.getElementById(`settings-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
   return (
@@ -225,18 +225,9 @@ export function RobotSettingsTab({ snap, rooms, actions }: { snap: VacuumSnapsho
         </Panel>
 
         <Panel title="Dock" id="settings-dock">
-          <div className="setting-list">
-            <SettingRow title="Mop wash frequency" sub="How often the robot returns to wash the mop.">
-              <Select label="Mop wash frequency" options={WASH_FREQS} value={d.washFreq} disabled={busy} onChange={(v) => void run('setWashFreq', { freq: v })} />
-            </SettingRow>
-            <SettingRow title="Washing mode">
-              <Select label="Washing mode" options={WASH_MODES} value={d.washMode} disabled={busy} onChange={(v) => void run('setWashMode', { mode: v })} />
-            </SettingRow>
-            <SettingRow title="Auto-empty mode" sub="How the dock empties the robot's dustbin.">
-              <Select label="Auto-empty mode" options={EMPTY_MODES} value={d.autoEmptyMode} disabled={busy} onChange={(v) => void run('setAutoEmptyMode', { mode: v })} />
-            </SettingRow>
-          </div>
+          <DockSettingsPanel snap={snap} actions={actions} />
         </Panel>
+
 
         <Panel title="Do Not Disturb" id="settings-quiet">
           <DndSettings snap={snap} actions={actions} />
@@ -258,41 +249,143 @@ export function RobotSettingsTab({ snap, rooms, actions }: { snap: VacuumSnapsho
   );
 }
 
-function DndSettings({ snap, actions }: { snap: VacuumSnapshot; actions: Actions }) {
-  const d = snap.dnd ?? { enabled: false, startHour: 22, startMinute: 0, endHour: 8, endMinute: 0 };
-  const [draft, setDraft] = useState(d);
-  const key = JSON.stringify(snap.dnd);
-  useEffect(() => { if (snap.dnd) setDraft(snap.dnd); }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
-  const time = (h: number, m: number) => `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-  const commit = (next: typeof draft) => {
-    setDraft(next);
-    if (next.enabled) void actions.run('setDnd', { startHour: next.startHour, startMinute: next.startMinute, endHour: next.endHour, endMinute: next.endMinute });
-    else void actions.run('disableDnd');
-  };
-  const parse = (v: string): [number, number] | null => {
-    const m = /^(\d{2}):(\d{2})$/.exec(v);
-    return m ? [Number(m[1]), Number(m[2])] : null;
-  };
+function DockSettingsPanel({ snap, actions }: { snap: VacuumSnapshot; actions: Actions }) {
+  const { run, busy } = actions;
+  const [confirmEmpty, setConfirmEmpty] = useState(false);
+  const caps = useMemo(() => new DockCapabilities(snap.model, snap.featureSet, snap.newFeatureSet), [snap.model, snap.featureSet, snap.newFeatureSet]);
+  const d = snap.dockSettings;
+  const { dockType, dockStatus } = snap.status;
+  const dockKnown = dockType !== undefined && dockType !== 0;
+  const freqOptions = caps.washFrequencyOptions;
+  const freqIndex = freqOptions.findIndex((o) => d.smartWash !== null && o.mode === d.smartWash.mode && (o.mode !== 0 || (o.intervalMinutes ?? 0) * 60 === d.smartWash.intervalSeconds));
+  const washModes = caps.washModes(dockType, dockStatus);
+  const washCode = caps.washModeCode(d.washMode, dockType);
+  const emptyModes = caps.autoEmptyModes;
+  const dockedAndIdle = isDockedAndIdle(snap.status);
   return (
     <div className="setting-list">
-      <SettingRow title="Quiet hours" sub={draft.enabled ? `The robot won't start cleaning between ${time(draft.startHour, draft.startMinute)} and ${time(draft.endHour, draft.endMinute)}.` : 'The robot cleans at any time.'}>
-        <Switch label="Quiet hours" checked={draft.enabled} disabled={actions.busy} onChange={(v) => commit({ ...draft, enabled: v })} />
+      <SettingRow title="Mop wash frequency" sub={washFrequencyLabel(d.smartWash)}>
+        <Select
+          label="Mop wash frequency"
+          options={freqOptions.map((o, i): [number, string] => [i, o.label])}
+          value={freqIndex}
+          disabled={busy || !dockKnown || d.smartWash === null}
+          onChange={(i) => { const o = freqOptions[i]; if (o) void run('setWashFrequency', { mode: o.mode, intervalMinutes: o.intervalMinutes }); }}
+        />
+      </SettingRow>
+      <SettingRow title="Washing mode" sub={caps.washModeLabel(d.washMode, dockType)}>
+        <Select label="Washing mode" options={washModes} value={washCode} disabled={busy || !dockKnown || d.washMode === null} onChange={(v) => void run('setWashMode', { mode: v })} />
+      </SettingRow>
+      {d.washWaterTemperature !== null && (
+        <SettingRow title="Washing water temperature" sub={labelFor(WASH_WATER_TEMPERATURES, d.washWaterTemperature)}>
+          <Select label="Washing water temperature" options={WASH_WATER_TEMPERATURES} value={d.washWaterTemperature} disabled={busy} onChange={(v) => void run('setWashWaterTemperature', { value: v })} />
+        </SettingRow>
+      )}
+      {d.mopDrying !== null && (
+        <SettingRow title="Mop drying" sub={d.mopDrying ? 'Dries the mops on the dock after cleaning.' : 'Mops are left wet on the dock.'}>
+          <Switch label="Mop drying" checked={d.mopDrying} disabled={busy} onChange={(v) => void run('setMopDrying', { enabled: v })} />
+        </SettingRow>
+      )}
+      {d.mopDrying !== null && d.dryTimeSeconds !== null && (
+        <SettingRow title="Drying time" sub={dryTimeLabel(d.dryTimeSeconds)}>
+          <Select label="Drying time" options={caps.dryTimeOptions(d.dryTimeSeconds)} value={d.dryTimeSeconds} disabled={busy} onChange={(v) => void run('setDryTime', { seconds: v })} />
+        </SettingRow>
+      )}
+      <SettingRow title="Auto-empty mode" sub={emptyModes.length ? caps.autoEmptyModeLabel(d.autoEmptyMode) : 'Not offered on this robot.'}>
+        <Select label="Auto-empty mode" options={emptyModes} value={d.autoEmptyMode} disabled={busy || d.autoEmptyMode === null || emptyModes.length === 0} onChange={(v) => void run('setAutoEmptyMode', { mode: v })} />
+      </SettingRow>
+      {snap.valley && (
+        <TimeWindow
+          title="Off-peak electricity"
+          on={(a, b) => `The robot charges and dries only between ${a} and ${b}.`}
+          off="The robot charges whenever it needs to."
+          value={snap.valley}
+          busy={busy}
+          onEnable={(w) => void run('setValley', w)}
+          onDisable={() => void run('disableValley')}
+        />
+      )}
+      <SettingRow title="Internal water tank" sub={dockedAndIdle ? 'Empty the robot\'s built-in water tank through the dock.' : 'Dock the robot and let it finish its task to empty its water tank.'}>
+        <button type="button" className="btn secondary sm" disabled={busy || !dockedAndIdle} onClick={() => setConfirmEmpty(true)}>Empty</button>
+      </SettingRow>
+      <FeatureRows snap={snap} actions={actions} section="DOCK" />
+      {confirmEmpty && (
+        <ConfirmDialog
+          title="Empty the water tank?"
+          text="The dock pumps the water out of the robot's built-in tank. The robot stays on the dock while it does."
+          confirm="Empty"
+          onConfirm={() => void run('emptyInbuiltWaterTank', {}, 'Emptying the water tank')}
+          onClose={() => setConfirmEmpty(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+interface Window { enabled: boolean; startHour: number; startMinute: number; endHour: number; endMinute: number }
+
+const clock = (h: number, m: number) => `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+
+function parseClock(v: string): [number, number] | null {
+  const m = /^(\d{2}):(\d{2})$/.exec(v);
+  return m ? [Number(m[1]), Number(m[2])] : null;
+}
+
+/** A switch and a from/until pair, for Do Not Disturb and the off-peak window. */
+function TimeWindow({ title, on, off, value, busy, onEnable, onDisable }: {
+  title: string;
+  on: (from: string, until: string) => string;
+  off: string;
+  value: Window;
+  busy: boolean;
+  onEnable: (w: Omit<Window, 'enabled'>) => void;
+  onDisable: () => void;
+}) {
+  const [draft, setDraft] = useState(value);
+  const key = JSON.stringify(value);
+  useEffect(() => setDraft(value), [key]); // eslint-disable-line react-hooks/exhaustive-deps
+  const commit = (next: Window) => {
+    setDraft(next);
+    if (next.enabled) onEnable({ startHour: next.startHour, startMinute: next.startMinute, endHour: next.endHour, endMinute: next.endMinute });
+    else onDisable();
+  };
+  return (
+    <>
+      <SettingRow title={title} sub={draft.enabled ? on(clock(draft.startHour, draft.startMinute), clock(draft.endHour, draft.endMinute)) : off}>
+        <Switch label={title} checked={draft.enabled} disabled={busy} onChange={(v) => commit({ ...draft, enabled: v })} />
       </SettingRow>
       {draft.enabled && (
         <SettingRow title="From / until">
           <span className="row">
-            <input className="input" type="time" aria-label="Start time" value={time(draft.startHour, draft.startMinute)} onChange={(e) => {
-              const t = parse(e.target.value);
+            <input className="input" type="time" aria-label={`${title} start`} value={clock(draft.startHour, draft.startMinute)} onChange={(e) => {
+              const t = parseClock(e.target.value);
               if (t) commit({ ...draft, startHour: t[0], startMinute: t[1] });
             }} />
             <span className="muted">to</span>
-            <input className="input" type="time" aria-label="End time" value={time(draft.endHour, draft.endMinute)} onChange={(e) => {
-              const t = parse(e.target.value);
+            <input className="input" type="time" aria-label={`${title} end`} value={clock(draft.endHour, draft.endMinute)} onChange={(e) => {
+              const t = parseClock(e.target.value);
               if (t) commit({ ...draft, endHour: t[0], endMinute: t[1] });
             }} />
           </span>
         </SettingRow>
       )}
+    </>
+  );
+}
+
+function DndSettings({ snap, actions }: { snap: VacuumSnapshot; actions: Actions }) {
+  const d = snap.dnd ?? { enabled: false, startHour: 22, startMinute: 0, endHour: 8, endMinute: 0 };
+  return (
+    <div className="setting-list">
+      <TimeWindow
+        title="Quiet hours"
+        on={(a, b) => `The robot won't start cleaning between ${a} and ${b}.`}
+        off="The robot cleans at any time."
+        value={d}
+        busy={actions.busy}
+        onEnable={(w) => void actions.run('setDnd', w)}
+        onDisable={() => void actions.run('disableDnd')}
+      />
     </div>
   );
 }
