@@ -207,7 +207,7 @@ export function RobotSettingsTab({ snap, rooms, actions }: { snap: VacuumSnapsho
                 <Icon name="find" />{found ? 'Beeping...' : 'Find'}
               </button>
             </SettingRow>
-            <SettingRow title="Voice volume" sub={`Robot reports ${r.volume}.`}>
+            <SettingRow title="Voice volume" sub={volume === r.volume ? undefined : `The robot is set to ${r.volume}%.`}>
               <Select label="Voice volume" options={VOLUMES} value={volume} disabled={busy} onChange={(v) => void run('setVolume', { volume: v })} />
             </SettingRow>
             <SettingRow title="Child lock" sub={r.childLock ? 'The buttons on the robot are locked.' : 'The buttons on the robot work.'}>
@@ -216,6 +216,8 @@ export function RobotSettingsTab({ snap, rooms, actions }: { snap: VacuumSnapsho
             <SettingRow title="Status light" sub="The light on top of the robot.">
               <Switch label="Status light" checked={r.ledEnabled} disabled={busy} onChange={(v) => void run('setLed', { on: v })} />
             </SettingRow>
+        <Panel title="Carpet" id="settings-carpet">
+          <div className="setting-list">
             <SettingRow title="Carpet mode" sub="What the robot does on carpet.">
               <Select label="Carpet mode" options={CARPET_MODES} value={r.carpetMode} disabled={busy} onChange={(v) => void run('setCarpetMode', { mode: v })} />
             </SettingRow>

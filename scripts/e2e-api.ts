@@ -137,9 +137,13 @@ async function main() {
   check((await call(S8, 'createTimer', { hour: 7, minute: 30, weekdays: [0, 6] })).ok, 'schedule created');
   check((await call(S8, 'fetchTimers')).ok && (await until('timers', () => snapshots.get(S8)?.timers.length === 2)) !== null, 'schedule reads back');
   check((await call(S8, 'setVolume', { volume: 30 })).ok, 'volume set');
+  check((await call(S8, 'setCarpetMode', { mode: 2 })).ok && (await until('carpet', () => snapshots.get(S8)?.robotSettings.carpetMode === 2)) !== null, 'carpet mode sent as a bare object');
+  check((await call(S8, 'setLed', { on: false })).ok && (await until('led', () => snapshots.get(S8)?.robotSettings.ledEnabled === false)) !== null, 'status light sent as a bare value');
+  check((await call(S8, 'setChildLock', { locked: true })).ok && (await until('lock', () => snapshots.get(S8)?.robotSettings.childLock === true)) !== null, 'child lock read back');
   check((await call(S8, 'setDnd', { startHour: 23, startMinute: 15, endHour: 7, endMinute: 0 })).ok, 'DND set');
   check((await call(S8, 'resetConsumable', { field: 'filter_work_time' })).ok, 'filter reset');
   check((await call(S8, 'resetConsumable', { field: 'rm -rf' })).ok === false, 'unknown consumable refused');
+
 
   // Map edits (legacy, single map 0)
   const noGo = { x0: 25000, y0: 26000, x1: 26000, y1: 26000, x2: 26000, y2: 25000, x3: 25000, y3: 25000, kind: 'NO_GO' };

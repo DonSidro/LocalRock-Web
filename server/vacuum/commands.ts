@@ -3,7 +3,7 @@ import { FanPower, WaterBoxMode, mapNameBlocker, normalizeWaterMode, type RoomCl
 import { mapIndexBlocker } from '../../shared/mapEdit.js';
 import { asInt, errorCode, isObject, type V1Response } from '../protocol/envelope.js';
 import { JsonDouble, type JsonValue } from '../protocol/json.js';
-import { MapEditError, RobotCommandError, RobotSilentError } from './errors.js';
+import { MapEditError, RobotCommandError, RobotSilentError, RobotUnsupportedCommandError } from './errors.js';
 import type { DataParamsFormat, VacuumSession } from './session.js';
 
 /*
@@ -52,12 +52,12 @@ export function appRcMove(s: VacuumSession, velocity: number, omega: number, dur
   }]);
 }
 
-export const appGotoTarget = (s: VacuumSession, x: number, y: number) => s.sendCommand('app_goto_target', [[x, y]]);
+export const appGotoTarget = (s: VacuumSession, x: number, y: number) => s.sendCommand('app_goto_target', [x, y]);
 
 export interface ZoneRect { x1: number; y1: number; x2: number; y2: number; times: number }
 
 export function appZonedClean(s: VacuumSession, zones: ZoneRect[]) {
-  return s.sendCommand('app_zoned_clean', [zones.map((z) => [z.x1, z.y1, z.x2, z.y2, z.times])]);
+  return s.sendCommand('app_zoned_clean', zones.map((z) => [z.x1, z.y1, z.x2, z.y2, z.times]));
 }
 
 export const getTimer = (s: VacuumSession) => s.sendCommand('get_timer');
@@ -70,13 +70,19 @@ export const delTimer = (s: VacuumSession, id: string) => s.sendCommand('del_tim
 export const updTimer = (s: VacuumSession, id: string, enabled: boolean) => s.sendCommand('upd_timer', [[id, enabled ? 'on' : 'off']]);
 
 export const getSoundVolume = (s: VacuumSession) => s.sendCommand('get_sound_volume');
-export const setSoundVolume = (s: VacuumSession, volume: number) => s.sendCommand('set_sound_volume', [volume]);
-export const getChildLock = (s: VacuumSession) => s.sendCommand('get_child_lock');
-export const setChildLock = (s: VacuumSession, locked: boolean) => s.sendCommand('set_child_lock', [{ lock_status: locked ? 1 : 0 }]);
+export const setSoundVolume = (s: VacuumSession, volume: number) => s.sendCommand('change_sound_volume', [volume]);
+export const getChildLock = (s: VacuumSession) => s.sendCommand('get_child_lock_status');
+export const setChildLock = (s: VacuumSession, locked: boolean) => s.sendCommandRaw('set_child_lock_status', { lock_status: locked ? 1 : 0 });
 export const getLedStatus = (s: VacuumSession) => s.sendCommand('get_led_status');
-export const setLedStatus = (s: VacuumSession, on: boolean) => s.sendCommand('set_led_status', [{ led_status: on ? 1 : 0 }]);
+/**
+ * The LED is the bare value [1], the shape get_led_status answers: an S8 Pro Ultra (a70) and a Qrevo
+ * Curv 2 Flow (a245) answer [{"led_status": 1}] with -10005 "Invalid type".
+ */
+export const ledStatusParams = (on: boolean): JsonValue => [on ? 1 : 0];
+export const setLedStatus = (s: VacuumSession, on: boolean) => s.sendCommand('set_led_status', ledStatusParams(on));
 export const getMopMode = (s: VacuumSession) => s.sendCommand('get_mop_mode');
 export const setMopMode = (s: VacuumSession, mode: number) => s.sendCommand('set_mop_mode', [mode]);
+
 
 /** Sets suction, water and route at once; the only way in or out of SmartPlan. */
 export function encodeCleanMotorModeParams(fanPower: number, waterBoxMode: number, mopMode: number): JsonValue {
@@ -88,7 +94,8 @@ export const setCleanMotorMode = (s: VacuumSession, fan: number, water: number, 
 
 export const appSetDryerStatus = (s: VacuumSession, on: boolean) => s.sendCommandRaw('app_set_dryer_status', { status: on ? 1 : 0 });
 export const getCarpetCleanMode = (s: VacuumSession) => s.sendCommand('get_carpet_clean_mode');
-export const setCarpetCleanMode = (s: VacuumSession, mode: number) => s.sendCommand('set_carpet_clean_mode', [{ carpet_clean_mode: mode }]);
+/** A bare object like the official app; a Curv 2 Flow refuses the list form ("param is not an object"). */
+export const setCarpetCleanMode = (s: VacuumSession, mode: number) => s.sendCommandRaw('set_carpet_clean_mode', { carpet_clean_mode: mode });
 export const getWashTowelMode = (s: VacuumSession) => s.sendCommand('get_wash_towel_mode');
 export const setWashTowelMode = (s: VacuumSession, mode: number) => s.sendCommand('set_wash_towel_mode', [{ wash_mode: mode }]);
 export const getSmartWashParams = (s: VacuumSession) => s.sendCommand('get_smart_wash_params');
@@ -274,6 +281,20 @@ export async function inEditSession<T>(s: VacuumSession, block: () => Promise<T>
 
 export const saveMap = (s: VacuumSession, noGo: MapZone[], walls: VirtualWall[], mapIndex: number) =>
   sendData(s, 'save_map', saveMapData(noGo, walls, mapIndex));
+
+/** True when the answer is "unknown_method", bare or as the only item of a list. */
+export function isUnknownMethod(resp: V1Response): boolean {
+  const r = resp.result;
+  const v = Array.isArray(r) && r.length === 1 ? r[0] : r;
+  return v === 'unknown_method';
+}
+
+/** requireOk, and also fails when the robot doesn't know the command; that answer carries no error object. */
+export function requireApplied(resp: V1Response, method: string): V1Response {
+  requireOk(resp, method);
+  if (isUnknownMethod(resp)) throw new RobotUnsupportedCommandError(method);
+  return resp;
+}
 
 export const setCarpetAreas = async (s: VacuumSession, carpets: MapZone[], mapIndex: number, withFlags: boolean) =>
   requireOk(await s.sendCommandRaw('set_carpet_area', encodeCarpetAreaParams(carpets, mapIndex, withFlags), { timeoutMs: MAP_EDIT_TIMEOUT_MS }), 'set_carpet_area');

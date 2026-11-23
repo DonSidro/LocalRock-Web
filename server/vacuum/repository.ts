@@ -17,9 +17,9 @@ import { parseAnyMap } from '../map/parse.js';
 import type { MqttLink } from '../net/mqttLink.js';
 import type { Room } from '../net/serverApi.js';
 import { log } from '../log.js';
-import { Aborted, Mutex, firstInt, firstObject, intField, sleep } from '../util.js';
+import { Aborted, Mutex, answerInt, firstInt, firstObject, intField, sleep } from '../util.js';
 import * as C from './commands.js';
-import { MapEditError, RobotCommandError, RobotTimeoutError, describeError as describeException } from './errors.js';
+import { MapEditError, RobotCommandError, RobotTimeoutError, RobotUnsupportedCommandError, UserError, describeError as describeException } from './errors.js';
 import type { VacuumSession } from './session.js';
 
 /*
@@ -610,8 +610,8 @@ export class VacuumRepository extends EventEmitter {
   rcStart = () => C.appRcStart(this.deps.session).then(() => undefined);
   rcEnd = () => C.appRcEnd(this.deps.session).then(() => undefined);
   rcMove = (velocity: number, omega: number, durationMs: number) => C.appRcMove(this.deps.session, velocity, omega, durationMs).then(() => undefined);
-  gotoTarget = (x: number, y: number) => C.appGotoTarget(this.deps.session, x, y).then(() => undefined);
-  cleanZones = (zones: C.ZoneRect[]) => C.appZonedClean(this.deps.session, zones).then(() => undefined);
+  gotoTarget = (x: number, y: number) => C.appGotoTarget(this.deps.session, x, y).then((r) => { C.requireOk(r, 'app_goto_target'); });
+  cleanZones = (zones: C.ZoneRect[]) => C.appZonedClean(this.deps.session, zones).then((r) => { C.requireOk(r, 'app_zoned_clean'); });
   resetConsumable = (field: string) => C.resetConsumable(this.deps.session, field).then(() => undefined);
 
   async fetchMopMode(): Promise<void> {
@@ -724,59 +724,66 @@ export class VacuumRepository extends EventEmitter {
     const id = String(Math.floor(Date.now() / 1000));
     const days = [...new Set(weekdays)].sort((a, b) => a - b);
     const cron = `${minute} ${hour} * * ${days.length === 0 ? '*' : days.join(',')}`;
-    await C.setTimer(this.deps.session, id, true, cron);
+    C.requireOk(await C.setTimer(this.deps.session, id, true, cron), 'set_timer');
     this.timers = [...this.timers, { id, enabled: true, hour, minute, weekdays: days }];
     this.changed();
   }
 
   async toggleTimer(id: string): Promise<void> {
     const timer = this.timers.find((t) => t.id === id);
-    if (!timer) throw new Error('That schedule is no longer there');
-    await C.updTimer(this.deps.session, id, !timer.enabled);
+    if (!timer) throw new UserError('That schedule is no longer there');
+    C.requireOk(await C.updTimer(this.deps.session, id, !timer.enabled), 'upd_timer');
     this.timers = this.timers.map((t) => (t.id === id ? { ...t, enabled: !t.enabled } : t));
     this.changed();
   }
 
   async deleteTimer(id: string): Promise<void> {
-    await C.delTimer(this.deps.session, id);
+    C.requireOk(await C.delTimer(this.deps.session, id), 'del_timer');
     this.timers = this.timers.filter((t) => t.id !== id);
     this.changed();
   }
 
   async fetchRobotSettings(): Promise<void> {
     const s = this.deps.session;
-    const quietly = async <T>(f: () => Promise<T>): Promise<T | null> => { try { return await f(); } catch { return null; } };
-    const volume = firstInt((await quietly(() => C.getSoundVolume(s)))?.result);
+    // Each read stands alone: a Qrevo answers the volume as [45], the LED as [1] and the carpet mode
+    // as [{...}], and one read that failed must not skip the others.
+    const read = async (key: string | null, ask: () => Promise<V1Response>): Promise<number | null> => {
+      try { return answerInt((await ask()).result, key); } catch { return null; }
+    };
+    const volume = await read(null, () => C.getSoundVolume(s));
     if (volume !== null) this.robotSettings = { ...this.robotSettings, volume };
-    const lock = intField(firstObject((await quietly(() => C.getChildLock(s)))?.result), 'lock_status');
+    const lock = await read('lock_status', () => C.getChildLock(s));
     if (lock !== null) this.robotSettings = { ...this.robotSettings, childLock: lock === 1 };
-    const led = intField(firstObject((await quietly(() => C.getLedStatus(s)))?.result), 'led_status');
+    const led = await read('led_status', () => C.getLedStatus(s));
     if (led !== null) this.robotSettings = { ...this.robotSettings, ledEnabled: led === 1 };
-    const carpet = intField(firstObject((await quietly(() => C.getCarpetCleanMode(s)))?.result), 'carpet_clean_mode');
+    const carpet = await read('carpet_clean_mode', () => C.getCarpetCleanMode(s));
     if (carpet !== null) this.robotSettings = { ...this.robotSettings, carpetMode: carpet };
     this.changed();
   }
 
   async setVolume(volume: number): Promise<void> {
-    await C.setSoundVolume(this.deps.session, volume);
+    C.requireOk(await C.setSoundVolume(this.deps.session, volume), 'change_sound_volume');
     this.robotSettings = { ...this.robotSettings, volume };
     this.changed();
   }
 
   async setChildLock(locked: boolean): Promise<void> {
-    await C.setChildLock(this.deps.session, locked);
-    this.robotSettings = { ...this.robotSettings, childLock: locked };
+    C.requireOk(await C.setChildLock(this.deps.session, locked), 'set_child_lock_status');
+    // Read back after the ok, so the switch shows what the robot holds; the tapped value stands in if the read fails.
+    let held: number | null = null;
+    try { held = answerInt((await C.getChildLock(this.deps.session)).result, 'lock_status'); } catch { /* keep the tapped value */ }
+    this.robotSettings = { ...this.robotSettings, childLock: held === null ? locked : held === 1 };
     this.changed();
   }
 
   async setLed(on: boolean): Promise<void> {
-    await C.setLedStatus(this.deps.session, on);
+    C.requireOk(await C.setLedStatus(this.deps.session, on), 'set_led_status');
     this.robotSettings = { ...this.robotSettings, ledEnabled: on };
     this.changed();
   }
 
   async setCarpetMode(mode: number): Promise<void> {
-    await C.setCarpetCleanMode(this.deps.session, mode);
+    C.requireOk(await C.setCarpetCleanMode(this.deps.session, mode), 'set_carpet_clean_mode');
     this.robotSettings = { ...this.robotSettings, carpetMode: mode };
     this.changed();
   }

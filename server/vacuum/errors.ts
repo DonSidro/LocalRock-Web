@@ -1,6 +1,13 @@
 import { asInt } from '../protocol/envelope.js';
 
 /** The robot answered a command with an error object. */
+/** The robot doesn't know `method` at all, so nothing was changed. */
+export class RobotUnsupportedCommandError extends Error {
+  constructor(readonly method: string) {
+    super(`The robot doesn't support ${method}`);
+  }
+}
+
 export class RobotCommandError extends Error {
   constructor(readonly method: string, readonly error: Record<string, unknown>) {
     super(robotErrorText(method, error));

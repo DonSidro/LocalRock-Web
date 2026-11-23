@@ -175,7 +175,7 @@ export class SimRobot {
         respond(reply, 150);
       }
     };
-    const p0 = Array.isArray(params) ? params[0] : undefined;
+    const p0 = Array.isArray(params) ? params[0] : params;
     const s = this.status;
     switch (method) {
       case 'get_status': return respond({ result: [{ ...s, msg_ver: 2, msg_seq: 1 }] });
@@ -240,13 +240,19 @@ export class SimRobot {
       }
       case 'del_timer': this.timers = this.timers.filter((t) => t.id !== p0); return respond(ok);
       case 'get_sound_volume': return respond({ result: [this.settings.volume] });
-      case 'set_sound_volume': this.settings.volume = Number(p0); return respond(ok);
-      case 'get_child_lock': return respond({ result: { lock_status: this.settings.lock } });
-      case 'set_child_lock': this.settings.lock = (p0 as Record<string, number>)['lock_status']!; return respond(ok);
-      case 'get_led_status': return respond({ result: { led_status: this.settings.led } });
-      case 'set_led_status': this.settings.led = (p0 as Record<string, number>)['led_status']!; return respond(ok);
+      case 'change_sound_volume': this.settings.volume = Number(p0); return respond(ok);
+      case 'get_child_lock_status': return respond({ result: { lock_status: this.settings.lock } });
+      case 'set_child_lock_status': this.settings.lock = (p0 as Record<string, number>)['lock_status']!; return respond(ok);
+      case 'get_led_status': return respond({ result: [this.settings.led] });
+      case 'set_led_status':
+        if (typeof p0 !== 'number') return respond({ error: { code: -10005, message: 'Invalid type' } });
+        this.settings.led = p0;
+        return respond(ok);
       case 'get_carpet_clean_mode': return respond({ result: [{ carpet_clean_mode: this.settings.carpet }] });
-      case 'set_carpet_clean_mode': this.settings.carpet = (p0 as Record<string, number>)['carpet_clean_mode']!; return respond(ok);
+      case 'set_carpet_clean_mode':
+        if (Array.isArray(params)) return respond({ error: { code: -10005, message: 'param is not an object' } });
+        this.settings.carpet = (params as Record<string, number>)['carpet_clean_mode']!;
+        return respond(ok);
       case 'get_wash_towel_mode': return respond({ result: { wash_mode: this.settings.wash } });
       case 'set_wash_towel_mode': this.settings.wash = (p0 as Record<string, number>)['wash_mode']!; return respond(ok);
       case 'get_smart_wash_params': return respond({ result: { smart_wash: 0, wash_interval: this.settings.washInterval } });
