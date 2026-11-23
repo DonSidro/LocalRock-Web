@@ -68,6 +68,7 @@ export function VacuumWorkspace({ duid, tab, tool }: { duid: string; tab: VacTab
   const primary = () => {
     if (!snap) return;
     if (action === 'pause') void run('pause');
+    else if (action === 'resume') void run('resume');
     else { setSessionRooms([]); void run('clean', {}, action === 'clean' ? 'Cleaning started' : undefined); }
   };
   const dock = () => { setSessionRooms([]); void run('dock', {}, 'Returning to dock'); };

@@ -23,6 +23,39 @@ import { VacuumSession } from './vacuum/session.js';
 const PROBE_ATTEMPTS = 2;
 const PROBE_TIMEOUT_MS = 4_000;
 const PROBE_LINK_WAIT_MS = 5_000;
+/**
+ * The robots in the order the list shows them: by name, ignoring case, with numbers in a name compared
+ * as numbers so "Robot 2" comes before "Robot 10". The server returns them in pairing order, which puts
+ * a newly paired robot last whatever it is called. Equal names keep a stable order by device id.
+ */
+export function sortedForList<T extends { name: string; duid: string }>(devices: T[]): T[] {
+  return [...devices].sort((a, b) => naturalCompare(a.name, b.name) || (a.duid < b.duid ? -1 : a.duid > b.duid ? 1 : 0));
+}
+
+export function naturalCompare(a: string, b: string): number {
+  const x = a.trim().toLowerCase();
+  const y = b.trim().toLowerCase();
+  const digit = (c: string | undefined) => c !== undefined && c >= '0' && c <= '9';
+  let i = 0;
+  let j = 0;
+  while (i < x.length && j < y.length) {
+    if (digit(x[i]) && digit(y[j])) {
+      const si = i;
+      const sj = j;
+      while (digit(x[i])) i++;
+      while (digit(y[j])) j++;
+      const nx = x.slice(si, i).replace(/^0+/, '');
+      const ny = y.slice(sj, j).replace(/^0+/, '');
+      if (nx.length !== ny.length) return nx.length - ny.length;
+      if (nx !== ny) return nx < ny ? -1 : 1;
+    } else {
+      if (x[i] !== y[j]) return x.charCodeAt(i) - y.charCodeAt(j);
+      i++;
+      j++;
+    }
+  }
+  return (x.length - i) - (y.length - j);
+}
 
 export class App extends EventEmitter {
   readonly store: Store;
@@ -87,7 +120,7 @@ export class App extends EventEmitter {
   }
 
   deviceSummaries(): DeviceSummary[] {
-    return this.devices.map((d) => {
+    return sortedForList(this.devices).map((d) => {
       const reach = this.reachability.get(d.duid) ?? null;
       return {
         duid: d.duid,

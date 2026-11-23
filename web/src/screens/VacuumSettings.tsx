@@ -3,7 +3,7 @@ import { CONSUMABLE_LIFETIME_S } from '../../../shared/codes';
 import type { VacuumSnapshot } from '../../../shared/api';
 import type { MapRoom } from '../../../shared/map';
 import { Icon, type IconName } from '../icons';
-import { ConfirmDialog, Empty, IconButton, Panel, Select, SettingRow, Spinner, Switch } from '../ui';
+import { ConfirmDialog, Empty, IconButton, Modal, Panel, Segmented, Select, SettingRow, Spinner, Switch } from '../ui';
 import { useRobotActions } from '../useRobot';
 
 /* The History, Maintenance and Settings tabs of a robot's workspace. */
@@ -79,13 +79,13 @@ function hm(sec: number): string {
 
 // ---- Maintenance ------------------------------------------------------------------------------
 
-const CONSUMABLES: Array<{ key: keyof NonNullable<VacuumSnapshot['consumables']>; field: string; title: string; icon: IconName; tint: string; life: number; optional?: boolean }> = [
+const CONSUMABLES: Array<{ key: keyof NonNullable<VacuumSnapshot['consumables']>; field: string; title: string; icon: IconName; tint: string; life: number; optional?: boolean; runs?: boolean }> = [
   { key: 'mainBrushWorkTime', field: 'main_brush_work_time', title: 'Main brush', icon: 'autorenew', tint: 'var(--good)', life: CONSUMABLE_LIFETIME_S.mainBrush },
   { key: 'sideBrushWorkTime', field: 'side_brush_work_time', title: 'Side brush', icon: 'autorenew', tint: 'var(--water)', life: CONSUMABLE_LIFETIME_S.sideBrush },
   { key: 'filterWorkTime', field: 'filter_work_time', title: 'Filter', icon: 'air', tint: 'var(--accent-purple)', life: CONSUMABLE_LIFETIME_S.filter },
   { key: 'sensorDirtyTime', field: 'sensor_dirty_time', title: 'Sensor', icon: 'find', tint: 'var(--warn)', life: CONSUMABLE_LIFETIME_S.sensor },
-  { key: 'cleaningBrushWorkTime', field: 'cleaning_brush_work_times', title: 'Maintenance brush', icon: 'brush', tint: 'var(--accent-cyan)', life: CONSUMABLE_LIFETIME_S.cleaningBrush, optional: true },
-  { key: 'strainerWorkTime', field: 'strainer_work_times', title: 'Strainer', icon: 'filter', tint: 'var(--accent-indigo)', life: CONSUMABLE_LIFETIME_S.strainer, optional: true },
+  { key: 'cleaningBrushWorkTime', field: 'cleaning_brush_work_times', title: 'Maintenance brush', icon: 'brush', tint: 'var(--accent-cyan)', life: CONSUMABLE_LIFETIME_RUNS.cleaningBrush, optional: true, runs: true },
+  { key: 'strainerWorkTime', field: 'strainer_work_times', title: 'Strainer', icon: 'filter', tint: 'var(--accent-indigo)', life: CONSUMABLE_LIFETIME_RUNS.strainer, optional: true, runs: true },
 ];
 
 export function MaintenanceTab({ snap, actions }: { snap: VacuumSnapshot; actions: Actions }) {
@@ -114,16 +114,18 @@ export function MaintenanceTab({ snap, actions }: { snap: VacuumSnapshot; action
         <Panel>
           <table className="table">
             <thead>
-              <tr><th>Part</th><th style={{ width: '40%' }}>Life left</th><th className="num">Time left</th><th /></tr>
+              <tr><th>Part</th><th style={{ width: '40%' }}>Life left</th><th className="num">Left</th><th /></tr>
             </thead>
             <tbody>
               {CONSUMABLES.filter((x) => !x.optional || c[x.key] !== undefined).map((x) => {
                 const used = c[x.key] ?? 0;
                 const remaining = Math.max(0, x.life - used);
-                const fraction = Math.min(1, Math.max(0, remaining / x.life));
+                const percent = percentLeft(used, x.life);
+                const fraction = percent / 100;
                 const color = fraction > 0.5 ? 'var(--good)' : fraction > 0.2 ? 'var(--warn)' : 'var(--error)';
                 const h = Math.floor(remaining / 3600);
                 const m = Math.floor((remaining % 3600) / 60);
+                const left = x.runs ? `${remaining} ${remaining === 1 ? 'run' : 'runs'}` : h > 0 ? `${h}h ${m}m` : `${m}m`;
                 return (
                   <tr key={x.key}>
                     <td>
@@ -135,10 +137,10 @@ export function MaintenanceTab({ snap, actions }: { snap: VacuumSnapshot; action
                     <td>
                       <span className="row">
                         <span className="progress grow"><span style={{ width: `${fraction * 100}%`, background: color }} /></span>
-                        <span className="small strong" style={{ color, width: 40, textAlign: 'right' }}>{Math.floor(fraction * 100)}%</span>
+                        <span className="small strong" style={{ color, width: 40, textAlign: 'right' }}>{percent}%</span>
                       </span>
                     </td>
-                    <td className="num">{h > 0 ? `${h}h ${m}m` : `${m}m`}</td>
+                    <td className="num">{left}</td>
                     <td style={{ textAlign: 'right' }}>
                       <button type="button" className="btn ghost sm" disabled={actions.busy} onClick={() => setResetting(x)}>Reset</button>
                     </td>

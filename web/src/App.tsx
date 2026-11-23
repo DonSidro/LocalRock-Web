@@ -3,7 +3,7 @@ import type { DeviceSummary } from '../../shared/api';
 import { get, post } from './api';
 import { Icon } from './icons';
 import { batteryColor, statusLine } from './robotStatus';
-import { useRoute, vacRoute, type Route } from './router';
+import { launchRobotTarget, navigate, parseRoute, useRoute, vacRoute, type Route } from './router';
 import { attempt, connect, disconnect, useStore } from './store';
 import { ConfirmDialog, IconButton, Link, Spinner, Toasts } from './ui';
 import { LoginScreen, PasswordScreen, ServerScreen } from './screens/Setup';
@@ -62,6 +62,28 @@ function Main() {
   return <Shell />;
 }
 
+/** Set when the page loaded on the robot list, so the launch decision is made once, against that first page. */
+const launchedOnList = parseRoute(location.hash).name === 'devices';
+let launchDecided = false;
+
+/** Opens the robot directly on launch (see launchRobotTarget); only once per page load, so the list stays one click away. */
+function useLaunchRobot(route: Route): void {
+  const devices = useStore((s) => s.devices);
+  useEffect(() => {
+    if (route.name === 'vacuum') { try { localStorage.setItem('localrock.lastRobot', route.duid); } catch { /* not kept */ } }
+  }, [route]);
+  useEffect(() => {
+    if (launchDecided || devices.length === 0) return;
+    launchDecided = true;
+    if (!launchedOnList || route.name !== 'devices') return;
+    let last: string | null = null;
+    try { last = localStorage.getItem('localrock.lastRobot'); } catch { /* none */ }
+    const target = launchRobotTarget(devices.filter((d) => d.paired && !d.unpaired).map((d) => d.duid), last);
+    // Pushed, not replaced, so Back returns to the list.
+    if (target) navigate(vacRoute(target));
+  }, [devices]); // eslint-disable-line react-hooks/exhaustive-deps
+}
+
 /** Sidebar with the robots on the left, the page on the right. Narrow windows get a drawer. */
 function Shell() {
   const route = useRoute();
@@ -69,6 +91,7 @@ function Shell() {
   const [confirmLogout, setConfirmLogout] = useState(false);
   const routeKey = JSON.stringify(route);
   useEffect(() => setDrawer(false), [routeKey]);
+  useLaunchRobot(route);
 
   return (
     <div className={`shell ${drawer ? 'drawer-open' : ''}`}>

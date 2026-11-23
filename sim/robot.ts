@@ -59,7 +59,7 @@ export class SimRobot {
   private timers: Array<{ id: string; on: boolean; cron: string }> = [{ id: '1700000000', on: true, cron: '0 9 * * 1,2,3,4,5' }];
   private settings = { volume: 80, lock: 0, led: 1, carpet: 1, wash: 1, washInterval: 1, dust: 0 };
   private dnd = { start_hour: 22, start_minute: 0, end_hour: 8, end_minute: 0, enabled: 1 };
-  private consumables = { main_brush_work_time: 412_000, side_brush_work_time: 655_000, filter_work_time: 120_000, sensor_dirty_time: 98_000, cleaning_brush_work_times: 50_000, strainer_work_times: 70_000 };
+  private consumables = { main_brush_work_time: 412_000, side_brush_work_time: 655_000, filter_work_time: 120_000, sensor_dirty_time: 98_000, cleaning_brush_work_times: 42, strainer_work_times: 120 };
   private cleanSeconds = 0;
   private returnAt = 0;
   onStateChange: (() => void) | null = null;
@@ -180,6 +180,8 @@ export class SimRobot {
     switch (method) {
       case 'get_status': return respond({ result: [{ ...s, msg_ver: 2, msg_seq: 1 }] });
       case 'app_start': this.startCleaning(5); return respond(ok);
+      case 'resume_zoned_clean': this.startCleaning(17); return respond(ok);
+      case 'resume_segment_clean': this.startCleaning(18); return respond(ok);
       case 'app_segment_clean': this.startCleaning(18); return respond(ok);
       case 'app_zoned_clean': this.startCleaning(17); return respond(ok);
       case 'app_pause': this.setState(10); return respond(ok);

@@ -28,3 +28,14 @@ describe('routes', () => {
     expect(parseRoute('#/vac/X/unknown')).toEqual({ name: 'vacuum', duid: 'X', tab: 'overview' });
   });
 });
+
+describe('launch', () => {
+  it('opens the only robot, or the last one opened', async () => {
+    const { launchRobotTarget } = await import('../web/src/router.js');
+    expect(launchRobotTarget(['a'], null)).toBe('a');
+    expect(launchRobotTarget(['a', 'b'], 'b')).toBe('b');
+    expect(launchRobotTarget(['a', 'b'], 'gone')).toBeNull();
+    expect(launchRobotTarget(['a', 'b'], null)).toBeNull();
+    expect(launchRobotTarget([], 'a')).toBeNull();
+  });
+});

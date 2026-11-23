@@ -40,6 +40,7 @@ export const CALLS: Record<string, Call> = {
   clean: action((repo) => repo.clean()),
   cleanRooms: action((repo, a) => repo.cleanRooms(intList(a['rooms'], 'rooms', 0, 255, 64, 1), oneOf(a['repeat'], 'cleaning count', [1, 2, 3] as const))),
   pause: action((repo) => repo.pause()),
+  resume: action((repo) => repo.resume()),
   stop: action((repo) => repo.stop()),
   dock: action((repo) => repo.dock()),
 

@@ -126,23 +126,35 @@ export const State = {
   EMPTYING_BIN: 22,
   WASHING_MOP: 23,
   NOT_CHARGING: 24,
+  /** A second code for washing the mop; the official app names both the same. */
+  WASHING_MOP_ALT: 25,
   GOING_TO_WASH_MOP: 26,
   DRYING_MOP: 27,
-  RETURNING_TO_DOCK_FOR_DRYING: 28,
+  /** The official app and python-roborock both name 28 "in call" (a live video call is open). */
+  IN_CALL: 28,
   /** The robot reports 29 for the whole app_start_build_map run. */
   MAPPING: 29,
+  EGG_ATTACK: 30,
+  /** Reported while the robot patrols with its camera: the pet search and Cruise. */
+  PATROLLING: 32,
+  SETUP_MOP: 33,
+  TEARDOWN_MOP: 34,
   CHARGING_COMPLETE: 100,
+  OFFLINE: 101,
+  LOCKED: 103,
 } as const;
 
+/** The official app's display table, cross-checked with python-roborock. */
 export function describeState(state: number): string {
   switch (state) {
+    case 0: return 'Getting info';
     case State.STARTING: return 'Starting';
-    case State.CHARGER_DISCONNECTED: return 'Charger disconnected';
+    case State.CHARGER_DISCONNECTED: return 'Sleeping';
     case State.IDLE: return 'Idle';
     case State.REMOTE_CONTROL_ACTIVE: return 'Remote control';
     case State.CLEANING: return 'Cleaning';
     case State.RETURNING_HOME: return 'Returning home';
-    case State.MANUAL_MODE: return 'Manual mode';
+    case State.MANUAL_MODE: return 'Remote controlling';
     case State.CHARGING: return 'Charging';
     case State.CHARGING_ERROR: return 'Charging error';
     case State.PAUSED: return 'Paused';
@@ -156,48 +168,165 @@ export function describeState(state: number): string {
     case State.SEGMENT_CLEANING: return 'Room cleaning';
     case State.MAPPING: return 'Mapping';
     case State.NOT_CHARGING: return 'Idle';
-    case State.WASHING_MOP: return 'Washing mop';
+    case State.WASHING_MOP: case State.WASHING_MOP_ALT: return 'Washing mop';
     case State.GOING_TO_WASH_MOP: return 'Going to wash mop';
     case State.DRYING_MOP: return 'Drying mop';
-    case State.RETURNING_TO_DOCK_FOR_DRYING: return 'Returning to dock';
+    case State.IN_CALL: return 'In call';
+    case State.EGG_ATTACK: return 'Scanning';
+    case State.SETUP_MOP: return 'Reinstalling mop cloth mounts';
+    case State.TEARDOWN_MOP: return 'Detaching mop cloth mounts';
+    case 36: return 'Demo mode';
+    case 37: return 'Boogie mode';
+    case 38: return 'Sorting';
+    case 39: return 'Remote control to pick up';
+    case 40: return 'Emergency stopped';
+    case 41: return 'Resetting';
+    case 42: return 'Programming mode';
+    case 43: return 'Changing the mop';
     case State.EMPTYING_BIN: return 'Emptying the bin';
     case State.CHARGING_COMPLETE: return 'Fully charged';
+    case State.OFFLINE: return 'Offline';
+    case State.LOCKED: return 'Saving map';
     default: return `State ${state}`;
   }
 }
 
+/** The official app's titles; the same numbering covers robot and dock errors. */
 const ERROR_TEXT: Record<number, string> = {
-  1: 'Laser sensor fault',
-  2: 'Collision sensor fault',
-  3: 'Wheel floating',
-  4: 'Cliff sensor fault',
-  5: 'Main brush blocked',
-  6: 'Side brush blocked',
-  7: 'Wheel blocked',
-  8: 'Robot stuck',
-  9: 'Dustbin missing',
-  10: 'Filter blocked',
-  11: 'Magnetic field detected',
+  1: 'LiDAR sensor error',
+  2: 'Bumper stuck',
+  3: 'Wheels suspended',
+  4: 'Cliff sensor error',
+  5: 'Main brush jammed',
+  6: 'Side brush jammed',
+  7: 'The robot is stuck, or main wheels are jammed',
+  8: 'The robot is trapped or stuck',
+  9: 'Dustbin not installed',
+  10: 'Filter is wet or blocked',
+  11: 'Strong magnetic field detected',
   12: 'Low battery',
-  13: 'Charging problem',
-  14: 'Battery failure',
-  15: 'Wall sensor fault',
-  16: 'Uneven surface',
-  17: 'Side brush failure',
-  18: 'Suction fan failure',
-  19: 'Unpowered dock',
-  21: 'Laser pressure sensor problem',
-  22: 'Charge sensor problem',
-  23: 'Dock problem',
+  13: 'Charging error',
+  14: 'Temperature protection',
+  15: 'The wall sensor is dirty',
+  16: 'Robot is tilted',
+  17: 'Side brush error',
+  18: 'Vacuum fan error',
+  19: 'Dock not connected to power',
+  20: 'The optical flow sensor is dirty',
+  21: 'Vertical bumper error',
+  22: 'Dock locator error',
+  23: 'Unable to return to dock',
   24: 'No-go zone or invisible wall detected',
-  25: 'Mop pad dirty',
-  26: 'Mop wash tank empty',
-  27: 'Dirty water tank full',
-  28: 'Mop pad not installed',
-  29: 'Battery overheating',
-  30: 'Mop pad blocked',
-  31: 'Mop pad not installed',
-  32: 'Dustbin not installed',
+  25: 'Camera error',
+  26: 'Wall sensor error',
+  27: 'Jammed mop module',
+  28: 'The robot may be on a carpet',
+  29: 'Unable to cross the carpet',
+  31: 'Front and rear sensors error',
+  32: 'No dustbin or filter installed',
+  34: 'Clean the auto-empty dock bin',
+  35: 'Auto-empty dock voltage error',
+  36: 'Front sensor dirty',
+  37: 'Rear sensor dirty',
+  38: 'Check the clean water tank',
+  39: 'Check the dirty water tank',
+  40: 'Water filter not installed',
+  41: 'Unable to open the electric hatch',
+  42: 'Check that the water filter is correctly installed',
+  43: 'Positioning button error',
+  44: 'Check and secure the dirty water tank cover',
+  45: 'Unable to close the electric hatch',
+  46: 'Check that the dust bag is properly installed',
+  48: 'Refill error',
+  49: 'Drain error',
+  51: 'Unit temperature protection',
+  52: 'Please check the cleaning tray',
+  53: 'Cleaning tray full',
+  54: 'The mop mount fell off',
+  55: 'Please check the cleaning tray',
+  56: 'Jammed mop module',
+  57: 'Cleaning tank maintenance brush error',
+  59: 'Main wheels jammed',
+  60: 'Omnidirectional wheel jammed',
+  61: 'Check whether the LiDAR sensor can lift and lower freely',
+  62: 'Check the water filter of the cleaning sink',
+  76: 'Roller mop not installed',
+  77: 'Dirty water channel not installed',
+  78: 'On-board dirty water tank not installed',
+  79: 'Roller mop fell off',
+  80: 'Dirty water channel fell off',
+  81: 'On-board dirty water tank fell off',
+  82: 'Roller mop cover error',
+  83: 'Drain actuator error',
+  84: 'On-board dirty water tank drain error',
+  85: 'Mop cloth mount not installed',
+  86: 'Climbing arm jammed',
+  95: 'Mop cloth mount installation failed',
+  97: 'Check the cleaning solution level',
+  98: 'LiDAR sensor dirty',
+  99: 'Please check the cleaning tray',
+  141: 'The robot is stuck, or main wheels are jammed',
+  143: 'The robot is stuck, or main wheels are jammed',
+  154: 'Side brush error',
+  155: 'Vacuum fan error',
+  644: 'Empty the dustbin',
+  100: 'Internal error. Reset the robot.',
+  101: 'Internal error. Reset the robot.',
+  102: 'Internal error. Reset the robot.',
+  103: 'Internal error. Reset the robot.',
+  104: 'Internal error. Reset the robot.',
+  105: 'Internal error. Reset the robot.',
+  106: 'Internal error. Reset the robot.',
+  107: 'Internal error. Reset the robot.',
+  108: 'Internal error. Reset the robot.',
+  109: 'Internal error. Reset the robot.',
+  110: 'Internal error. Reset the robot.',
+  111: 'Internal error. Reset the robot.',
+  112: 'Internal error. Reset the robot.',
+  113: 'Internal error. Reset the robot.',
+  114: 'Internal error. Reset the robot.',
+  115: 'Internal error. Reset the robot.',
+  116: 'Internal error. Reset the robot.',
+  117: 'Internal error. Reset the robot.',
+  118: 'Internal error. Reset the robot.',
+  119: 'Internal error. Reset the robot.',
+  120: 'Internal error. Reset the robot.',
+  121: 'Internal error. Reset the robot.',
+  122: 'Internal error. Reset the robot.',
+  123: 'Internal error. Reset the robot.',
+  124: 'Internal error. Reset the robot.',
+  125: 'Internal error. Reset the robot.',
+  128: 'Internal error. Reset the robot.',
+  129: 'Internal error. Reset the robot.',
+  164: 'Internal error. Reset the robot.',
+  165: 'Internal error. Reset the robot.',
+  166: 'Internal error. Reset the robot.',
+  167: 'Internal error. Reset the robot.',
+  169: 'Internal error. Reset the robot.',
+  171: 'Internal error. Reset the robot.',
+  172: 'Internal error. Reset the robot.',
+  253: 'Internal error. Reset the robot.',
+  254: 'Internal error. Reset the robot.',
+  255: 'Internal error. Reset the robot.',
+  126: 'Dock error. Unplug the dock and plug it back in.',
+  127: 'Dock error. Unplug the dock and plug it back in.',
+  130: 'Dock error. Unplug the dock and plug it back in.',
+  131: 'Dock error. Unplug the dock and plug it back in.',
+  134: 'Dock error. Unplug the dock and plug it back in.',
+  145: 'Dock error. Unplug the dock and plug it back in.',
+  147: 'Dock error. Unplug the dock and plug it back in.',
+  148: 'Dock error. Unplug the dock and plug it back in.',
+  149: 'Dock error. Unplug the dock and plug it back in.',
+  150: 'Dock error. Unplug the dock and plug it back in.',
+  151: 'Dock error. Unplug the dock and plug it back in.',
+  152: 'Dock error. Unplug the dock and plug it back in.',
+  153: 'Dock error. Unplug the dock and plug it back in.',
+  156: 'Dock error. Unplug the dock and plug it back in.',
+  157: 'Dock error. Unplug the dock and plug it back in.',
+  158: 'Dock error. Unplug the dock and plug it back in.',
+  159: 'Dock error. Unplug the dock and plug it back in.',
+  160: 'Dock error. Unplug the dock and plug it back in.',
+  163: 'Dock error. Unplug the dock and plug it back in.',
 };
 
 export function describeError(code: number): string {
@@ -311,14 +440,22 @@ export function roomCleanModesFor(segments: number[], stored: RoomCleanMode[]): 
   return segments.map((s) => bySegment.get(s) ?? defaultRoomCleanMode(s));
 }
 
+/** Lifetimes in seconds of use; the wash dock's two "_times" parts count runs since the last reset instead. */
 export const CONSUMABLE_LIFETIME_S = {
   mainBrush: 300 * 3600,
   sideBrush: 200 * 3600,
   filter: 150 * 3600,
   sensor: 30 * 3600,
-  cleaningBrush: 300 * 3600,
-  strainer: 150 * 3600,
 } as const;
+export const CONSUMABLE_LIFETIME_RUNS = {
+  cleaningBrush: 300,
+  strainer: 150,
+} as const;
+
+/** Share of the life left, rounded up and clamped to 0..100, as the official app shows it. */
+export function percentLeft(used: number, total: number): number {
+  return Math.min(100, Math.max(0, Math.ceil(100 * (1 - used / total))));
+}
 
 /**
  * Only plain ASCII names for map names: the captured `length` can't tell a character count from a

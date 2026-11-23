@@ -33,7 +33,7 @@ function dryingLabel(sec: number | undefined): string {
 
 function stateTint(state: number | undefined): string {
   switch (state) {
-    case State.WASHING_MOP: case State.GOING_TO_WASH_MOP: case State.DRYING_MOP: case State.RETURNING_TO_DOCK_FOR_DRYING:
+    case State.WASHING_MOP: case State.WASHING_MOP_ALT: case State.GOING_TO_WASH_MOP: case State.DRYING_MOP:
       return 'var(--tertiary)';
     case State.ERROR: case State.CHARGING_ERROR:
       return 'var(--error)';

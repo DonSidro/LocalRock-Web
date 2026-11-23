@@ -79,3 +79,11 @@ export function useRoute(): Route {
   );
   return parseRoute(hash);
 }
+/**
+ * Which robot to open on launch, like the app: one paired robot opens at once; with several, the last
+ * one opened (remembered in this browser); otherwise the list.
+ */
+export function launchRobotTarget(paired: string[], last: string | null): string | null {
+  if (paired.length === 1) return paired[0]!;
+  return last && paired.includes(last) ? last : null;
+}

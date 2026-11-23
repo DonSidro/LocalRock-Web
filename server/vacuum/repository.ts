@@ -1190,7 +1190,7 @@ export function parseCleanRecord(result: unknown, recordId: number): CleanRecord
       complete: asInt(element['complete']) ?? 0,
     };
   }
-  return null;
+  return null
 }
 
 export function parseCronTimer(id: string, enabled: boolean, cron: string): CleanTimer | null {
