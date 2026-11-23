@@ -229,6 +229,12 @@ export function RobotSettingsTab({ snap, rooms, actions }: { snap: VacuumSnapsho
           {matterOpen && <MatterDialog duid={snap.duid} onClose={() => setMatterOpen(false)} />}
         </Panel>
 
+        {isVoiceAssistantSupported(snap.newFeatureSet) && (
+          <Panel title="Voice Assistant" id="settings-voice">
+            <VoicePanel snap={snap} actions={actions} />
+          </Panel>
+        )}
+
         <Panel title="Carpet" id="settings-carpet">
           <div className="setting-list">
             <SettingRow title="Carpet mode" sub="What the robot does on carpet.">

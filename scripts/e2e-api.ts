@@ -271,6 +271,17 @@ async function main() {
   check(snapshots.get(CURV)!.supportsSmartPlan && snapshots.get(CURV)!.status.fanPower === 110, 'SmartPlan supported and active');
   const b01edit = await call(CURV, 'saveMapEdits', { noGoZones: [], walls: [], carpets: [], thresholds: [] });
   check(!b01edit.ok && /format/.test(b01edit.error ?? ''), 'B01 map editing refused');
+  // Voice Assistant (flag 37 on the Curv) and voice packs (server #261)
+  check((await call(CURV, 'fetchVoice')).ok && (await until('voice', () => snapshots.get(CURV)?.voice.enabled === true && snapshots.get(CURV)?.voice.historyCount === 3)) !== null, 'voice switch and chat count read');
+  check((await call(CURV, 'setVoiceSwitch', { on: false })).ok && (await until('voice off', () => snapshots.get(CURV)?.voice.enabled === false)) !== null, 'voice assistant off ({"data": 0})');
+  const chat = await call(CURV, 'voiceHistory');
+  check(chat.ok && chat.result.length === 3 && chat.result[0].speaker === 1, 'chat history read');
+  const packs = await call(CURV, 'voicePacks');
+  check(packs.ok && packs.result.map((p: { id: number }) => p.id).join() === '1,7', `voice packs for the robot's location (${packs.error ?? JSON.stringify(packs.result?.map((p: { id: number }) => p.id))})`);
+  check((await call(CURV, 'installVoicePack', { sid: 7 })).ok, 'voice pack install sent');
+  check((await until('voice pack', () => snapshots.get(CURV)?.voiceInstall?.done && snapshots.get(CURV)?.voice.currentSid === 7, 30_000)) !== null
+    && snapshots.get(CURV)?.voice.languageCode === 'de', 'voice pack installed and in use');
+
   // Matter and Find my pet (flags 67 and 48 on the Curv)
   const matter0 = await call(CURV, 'matterStatus');
   check(matter0.ok && matter0.result?.state === 'KeyNotExit', `Matter status read (${matter0.error ?? matter0.result?.state})`);

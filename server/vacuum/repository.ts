@@ -69,7 +69,15 @@ export interface RepositoryDeps {
   link: MqttLink;
   rriotKey: () => string;
   cleanOrder: (mapFlag: number) => number[];
+  /** What the server last heard from this robot, or null. */
+  lastKnown?: (includeMap: boolean) => Promise<LastKnownRaw | null>;
+  voicePackages?: () => Promise<unknown>;
+  firmware?: {
+    check: () => Promise<FirmwareUpdateInfo | null>;
+    start: () => Promise<{ started: boolean; version: string | null; reason: string | null }>;
+  };
 }
+
 const FIRMWARE_POLL_MS = 3_000;
 const FIRMWARE_CONFIRM_TRIES = 6;
 const FIRMWARE_START_LIMIT_MS = 2 * 60_000;
@@ -1037,6 +1045,102 @@ export class VacuumRepository extends EventEmitter {
 
   async resetMatter(): Promise<void> {
     C.requireOk(await C.resetMatter(this.deps.session), 'matter.reset');
+  }
+
+  // ---- Voice Assistant ----------------------------------------------------------------------
+
+  /** The switch, language and chat count; a read that fails keeps what an earlier read found. */
+  async fetchVoice(): Promise<void> {
+    const s = this.deps.session;
+    try {
+      const sw = parseVoiceSwitch(C.requireOk(await C.getVoiceServiceSwitch(s), 'get_voice_service_switch').result);
+      if (sw) this.voice = { ...this.voice, switchKey: sw.key, enabled: sw.enabled };
+    } catch { /* keep */ }
+    try {
+      const sound = C.requireOk(await C.getCurrentSound(s), 'get_current_sound').result;
+      const cur = parseCurrentSound(sound);
+      this.voice = { ...this.voice, languageCode: parseCurrentSoundLanguage(sound) ?? this.voice.languageCode, currentSid: cur?.sidInUse ?? this.voice.currentSid, location: cur?.location ?? this.voice.location };
+    } catch { /* keep */ }
+    try {
+      const summary = parseVoiceHistorySummary(C.requireOk(await C.getVoiceHistorySummary(s), 'get_voice_history_summary').result);
+      if (summary) this.voice = { ...this.voice, historyCount: summary.count };
+    } catch { /* keep */ }
+    this.changed();
+  }
+
+  async setVoiceSwitch(on: boolean): Promise<void> {
+    const key = this.voice.switchKey ?? 'data';
+    C.requireOk(await C.setVoiceServiceSwitch(this.deps.session, voiceSwitchParams(key, on)), 'set_voice_service_switch');
+    this.voice = { ...this.voice, switchKey: key, enabled: on };
+    this.changed();
+    try {
+      const sw = parseVoiceSwitch(C.requireOk(await C.getVoiceServiceSwitch(this.deps.session), 'get_voice_service_switch').result);
+      if (sw) { this.voice = { ...this.voice, enabled: sw.enabled }; this.changed(); }
+    } catch { /* the sent value stands */ }
+  }
+
+  /** Newest 1000 at most, read newest first; a window that fails twice ends the read with what was already read. */
+  async voiceHistory(): Promise<VoiceMessage[]> {
+    const summary = parseVoiceHistorySummary(C.requireOk(await C.getVoiceHistorySummary(this.deps.session), 'get_voice_history_summary').result);
+    if (!summary || summary.count <= 0) return [];
+    const out: VoiceMessage[] = [];
+    const fetchPage = async (min: number, max: number) => {
+      try { return parseVoiceHistory(C.requireOk(await C.getVoiceHistory(this.deps.session, min, max), 'get_voice_history').result); } catch { return null; }
+    };
+    for (const [min, max] of voiceHistoryWindows(summary).slice(-10).reverse()) {
+      let page = await fetchPage(min, max);
+      if (page === null) { await sleep(500); page = await fetchPage(min, max); }
+      if (page === null) break;
+      out.push(...page);
+    }
+    const seen = new Set<number>();
+    return out.filter((m) => (seen.has(m.id) ? false : (seen.add(m.id), true))).sort((a, b) => a.id - b.id);
+  }
+
+  /** The packs the server offers for this robot's model and location. */
+  async voicePacks(): Promise<VoicePack[]> {
+    if (!this.deps.voicePackages) throw new UserError('Voice packs unavailable');
+    const info = await this.deps.voicePackages();
+    if (this.voice.location === null) { try { await this.fetchVoice(); } catch { /* default location */ } }
+    const packs = parseVoicePackList(info, this.voice.location);
+    if (!packs) throw new UserError('The server could not get the voice pack list for this robot.');
+    return packs;
+  }
+
+  /** Sends dnld_install_sound, then follows get_sound_progress in the background until the pack is in use or fails. */
+  async installVoicePack(sid: number): Promise<void> {
+    if (this.voiceInstall && this.voiceInstall.failure === null && !this.voiceInstall.done) throw new UserError('Download in process. Try again later');
+    const pack = (await this.voicePacks()).find((p) => p.id === sid);
+    if (!pack) throw new UserError('That voice pack is no longer offered');
+    const set = (v: VoiceInstallState) => { this.voiceInstall = v; this.changed(); };
+    set({ sid, percent: null, failure: null, done: false });
+    try {
+      C.requireOk(await C.installSound(this.deps.session, installSoundParams(pack)), 'dnld_install_sound');
+    } catch {
+      set({ sid, percent: null, failure: 'SEND', done: false });
+      return;
+    }
+    void (async () => {
+      let waited = 0;
+      let idle = 0;
+      while (waited < 5 * 60_000) {
+        await sleep(2_000);
+        waited += 2_000;
+        let progress = null;
+        try { progress = parseSoundProgress(C.requireOk(await C.getSoundProgress(this.deps.session), 'get_sound_progress').result); } catch { /* none */ }
+        const busy = progress?.state === 1 || progress?.state === 2;
+        let current = null;
+        if (!busy) {
+          try { current = parseCurrentSound(C.requireOk(await C.getCurrentSound(this.deps.session), 'get_current_sound').result); } catch { /* none */ }
+        }
+        const step = voiceInstallStep(progress, current, sid, idle + 1);
+        idle = nextVoiceIdlePolls(step, current, idle);
+        if (step.kind === 'working') set({ sid, percent: step.percent, failure: null, done: false });
+        else if (step.kind === 'done') { set({ sid, percent: 100, failure: null, done: true }); await this.fetchVoice(); return; }
+        else { set({ sid, percent: null, failure: step.installFailed ? 'INSTALL' : 'DOWNLOAD', done: false }); return; }
+      }
+      set({ sid, percent: null, failure: 'TIMEOUT', done: false });
+    })();
   }
 
   // ---- Firmware (local_roborock_server #255) -------------------------------------------------

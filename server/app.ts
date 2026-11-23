@@ -387,6 +387,12 @@ export class App extends EventEmitter {
       link: this.link,
       rriotKey: () => (this.store.get().userData ?? ud).rriot.k,
       cleanOrder: (mapFlag) => this.store.cleanOrder(duid, mapFlag),
+      lastKnown: (includeMap) => this.lastKnown(duid, includeMap),
+      voicePackages: () => this.api.voicePackages(product?.model ?? ''),
+      firmware: {
+        check: () => this.api.checkFirmwareUpdate(duid),
+        start: () => this.api.startFirmwareUpdate(duid),
+      },
     });
     repo.setHomeRooms(this.home?.rooms ?? []);
     repo.on('change', (snapshot: VacuumSnapshot) => this.send({ t: 'vac', snapshot }));

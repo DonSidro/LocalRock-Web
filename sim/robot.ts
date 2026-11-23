@@ -203,6 +203,32 @@ export class SimRobot {
         this.setState(32);
         setTimeout(() => this.setState(8), 6_000);
         return respond(ok);
+      case 'get_voice_service_switch': return respond({ result: { data: this.voice.on } });
+      case 'set_voice_service_switch': {
+        const o = params as Record<string, number>;
+        if (Array.isArray(params) || typeof o['data'] !== 'number') return; // other shapes time out on real robots
+        this.voice.on = o['data'];
+        return respond(ok);
+      }
+      case 'get_current_sound': return respond({ result: [{ sid_in_use: this.voice.sid, sid_version: 1, sid_in_progress: this.voice.installing, location: 'de', language: this.voice.sid === 7 ? 'de' : 'en' }] });
+      case 'get_voice_history_summary': return respond({ result: { min_id: 1, max_id: 3, count: 3 } });
+      case 'get_voice_history': return respond({ result: { history: [
+        { id: 1, ts: 1763884800, text: 'Hello Rocky, clean the kitchen', speaker: 1 },
+        { id: 2, ts: 1763884802, text: 'Starting to clean the kitchen', speaker: 2 },
+        { id: 3, ts: 1763884900, text: 'go back to dock', speaker: 1 },
+      ] } });
+      case 'get_sound_progress': return respond({ result: [{ sid_in_progress: this.voice.installing, progress: this.voice.progress, state: this.voice.installing ? 1 : 3, error: 0 }] });
+      case 'dnld_install_sound': {
+        const o = params as Record<string, unknown>;
+        if (typeof o['sid'] !== 'number' || typeof o['url'] !== 'string') return respond({ error: { code: -10007, message: 'invalid params' } });
+        this.voice.installing = o['sid'];
+        this.voice.progress = 0;
+        const t = setInterval(() => {
+          this.voice.progress += 50;
+          if (this.voice.progress >= 100) { this.voice.sid = this.voice.installing; this.voice.installing = 0; clearInterval(t); }
+        }, 1_500);
+        return respond(ok);
+      }
       case 'get_ota_state': return respond({ result: [{ ota_state: this.ota.state }] });
       case 'get_ota_progress': return respond({ result: [{ ota_progress: this.ota.progress }] });
       case 'app_get_init_status':

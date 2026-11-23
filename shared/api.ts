@@ -191,6 +191,16 @@ export type ServerMessage =
 /** Browser -> server over the WebSocket. */
 export type ClientMessage = { t: 'watch'; duid: string } | { t: 'unwatch'; duid: string };
 
+/** What the Voice Assistant page shows; null where the robot did not answer. */
+export interface VoiceSnapshot {
+  switchKey: string | null;
+  enabled: boolean | null;
+  languageCode: string | null;
+  historyCount: number | null;
+  currentSid: number | null;
+  location: string | null;
+}
+
 /** What the server last heard from a robot that has stopped answering. */
 export interface LastKnown {
   /** ISO times from the server. */

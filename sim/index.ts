@@ -180,6 +180,17 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse): Promise<vo
     } });
   }
 
+  // Voice packs (local_roborock_server #261).
+  if (req.method === 'GET' && path === '/voice-pkg/info') {
+    if (!hawkOk(req, path, query, null)) return json(res, 401, { code: 401, msg: 'hawk check failed', data: null });
+    const base = `https://127.0.0.1:${HTTPS_PORT}/voice-pkg/files`;
+    return json(res, 200, { voice_list: [
+      { voice_id: 1, version: 1, lang: 'en', voice_title: 'English', voice_pkg_url: `${base}/en.pkg`, voice_pkg_md5: 'a'.repeat(32), voice_pri: 1, applicable: ['de', 'prc', 'us'] },
+      { voice_id: 7, version: 3, lang: 'de', voice_title: 'Deutsch', voice_sub_title: 'Standard', voice_pkg_url: `${base}/de.pkg`, voice_pkg_md5: 'b'.repeat(32), voice_pri: 2, applicable: ['de'] },
+      { voice_id: 9, version: 1, lang: 'ja', voice_title: '日本語', voice_pkg_url: `${base}/ja.pkg`, voice_pkg_md5: 'c'.repeat(32), voice_pri: 3, applicable: ['jp'] },
+    ] });
+  }
+
   // Firmware (local_roborock_server #255): one update for the S8.
   const otaCheck = path.match(/^\/ota\/firmware\/([^/]+)\/updatev2$/);
   if (req.method === 'GET' && otaCheck) {

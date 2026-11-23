@@ -322,6 +322,13 @@ export class ServerApi {
     return { started, version: text('version'), reason: started ? null : message };
   }
 
+  /** The voice-pkg info list for a model (local_roborock_server #261), with pack URLs pointing at the server. */
+  async voicePackages(model: string): Promise<unknown> {
+    const raw = await this.call('GET', '/voice-pkg/info', { query: { model } });
+    if (raw.status < 200 || raw.status >= 300) throw new ApiError(raw.status, `Voice packs unavailable (HTTP ${raw.status})`);
+    return parseJson(raw, 'Voice packs');
+  }
+
   async createRoom(homeId: number, name: string): Promise<Room> {
     const raw = await this.call('POST', `/user/homes/${homeId}/rooms`, { form: { name } });
     return apiData<Room>(raw, 'Create room');
