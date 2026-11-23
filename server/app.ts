@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
-import { isSmartPlanSupported, isWaterSlideSupported, roomNameProblem } from '../shared/codes.js';
-import type { AppState, DeviceSummary, MapDto, Reachability, RobotAlert, ServerMessage, VacuumSnapshot } from '../shared/api.js';
+import { ROOM_TYPES, isSmartPlanSupported, isWaterSlideSupported, roomNameProblem } from '../shared/codes.js';
+import type { AppState, DeviceSummary, MapDto, Reachability, RobotAlert, Routine, ServerMessage, VacuumSnapshot } from '../shared/api.js';
 import type { ParsedMap } from '../shared/map.js';
 import { config } from './config.js';
 import { log } from './log.js';
@@ -399,11 +399,40 @@ export class App extends EventEmitter {
     if (problem) throw new MapEditError(problem);
     const homeId = this.home?.id;
     if (homeId === undefined) throw new MapEditError('Home not loaded');
-    const room = await this.api.createRoom(homeId, name.trim());
     const repo = this.repository(duid);
+    await repo.checkRoomTable(segment);
+    const room = await this.api.createRoom(homeId, name.trim());
     await repo.assignRoom(segment, Number(room.id));
     await this.refreshDevices();
     repo.setHomeRooms(this.home?.rooms ?? []);
+  }
+
+  /**
+   * Set a room's type the way the Roborock app does: get a cloud room for the type's label, point the
+   * robot's segment at it with name_segment along with the type's tag (which the robot uses to adjust
+   * its cleaning), then reload the home so the name resolves.
+   */
+  async setRoomType(duid: string, segment: number, tag: number): Promise<void> {
+    const type = ROOM_TYPES.find((t) => t.tag === tag);
+    if (!type) throw new MapEditError('Unknown room type');
+    const homeId = this.home?.id;
+    if (homeId === undefined) throw new MapEditError('Home not loaded');
+    const repo = this.repository(duid);
+    await repo.checkRoomTable(segment);
+    const room = await this.api.createRoom(homeId, type.label);
+    await repo.assignRoom(segment, Number(room.id), type.tag);
+    await this.refreshDevices();
+    repo.setHomeRooms(this.home?.rooms ?? []);
+  }
+
+  /** The routines saved for one robot, in the order the server keeps them. */
+  routines(duid: string): Promise<Routine[]> {
+    return this.api.scenes(duid);
+  }
+
+  /** Asks the server to run a routine; the server sends the robot each step itself. Returns what to tell the user. */
+  async runRoutine(id: number, name: string): Promise<string> {
+    return routineRunMessage(name, await this.api.executeScene(id));
   }
 }
 

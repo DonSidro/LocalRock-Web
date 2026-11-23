@@ -92,6 +92,25 @@ export function isDockedAndIdle(s: VacuumStatus): boolean {
   return s.inCleaning === 0 && (s.state === State.CHARGING || s.state === State.CHARGING_COMPLETE);
 }
 
+/**
+ * The room types the official app offers when you edit a room. The robot keeps the type as a numeric
+ * tag per room and uses it to adjust cleaning preferences and order in the smart modes. Living room,
+ * Dining room, Kitchen and Hall were read back from the robot after the official app set them; the
+ * rest come from the official app's own tag table.
+ */
+export const ROOM_TYPES: ReadonlyArray<{ label: string; tag: number }> = [
+  { label: 'Living room', tag: 6 },
+  { label: 'Kitchen', tag: 14 },
+  { label: 'Dining room', tag: 13 },
+  { label: 'Bedroom', tag: 1 },
+  { label: 'Master bedroom', tag: 2 },
+  { label: 'Guest bedroom', tag: 3 },
+  { label: 'Bathroom', tag: 15 },
+  { label: 'Study', tag: 9 },
+  { label: 'Corridor', tag: 8 },
+  { label: 'Hall', tag: 10 },
+  { label: 'Balcony', tag: 7 },
+];
 
 export const DockErrorCodes = {
   OK: 0,

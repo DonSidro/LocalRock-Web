@@ -128,6 +128,11 @@ function home() {
     ],
   };
 }
+const scenes = [
+  { id: 101, name: 'After dinner', enabled: true, type: 'WORKFLOW', deviceId: 'SimS8ProUltra01', param: '{}' },
+  { id: 102, name: 'Kitchen twice', enabled: true, type: 'WORKFLOW', deviceId: 'SimS8ProUltra01', param: '{}' },
+];
+let runningScene: number | null = null;
 
 async function handleHttp(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const url = new URL(req.url ?? '/', `https://127.0.0.1:${HTTPS_PORT}`);
@@ -159,6 +164,27 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse): Promise<vo
       cloudRooms.push(room);
     }
     return json(res, 200, { code: 200, msg: 'success', data: room });
+  }
+
+  // Routines ("scenes"), as local_roborock_server keeps them; the run only tracks which one is going.
+  const sceneList = path.match(/^\/user\/scene\/device\/([^/]+)$/);
+  if (req.method === 'GET' && sceneList) {
+    if (!hawkOk(req, path, query, null)) return json(res, 401, { code: 401, msg: 'hawk check failed', data: null });
+    const duid = decodeURIComponent(sceneList[1]!);
+    return json(res, 200, { code: 200, msg: 'success', result: scenes.filter((s) => s.deviceId === duid) });
+  }
+  const sceneRun = path.match(/^\/user\/scene\/(\d+)\/execute$/);
+  if (req.method === 'POST' && sceneRun) {
+    if (!hawkOk(req, path, query, null)) return json(res, 401, { code: 401, msg: 'hawk check failed', data: null });
+    const scene = scenes.find((s) => s.id === Number(sceneRun[1]));
+    if (!scene) return json(res, 200, { code: 404, msg: 'scene not found', result: null });
+    const active = scenes.find((s) => s.id === runningScene);
+    if (active && active.id !== scene.id) {
+      return json(res, 200, { code: 200, msg: 'success', result: { accepted: false, status: 'routine_in_progress', sceneName: scene.name, activeSceneName: active.name } });
+    }
+    const cancel = active?.id === scene.id;
+    runningScene = cancel ? null : scene.id;
+    return json(res, 200, { code: 200, msg: 'success', result: { accepted: true, status: cancel ? 'cancel_requested' : 'started', sceneName: scene.name } });
   }
 
   // Test hook: forget every session and drop MQTT clients, as a server restart does.

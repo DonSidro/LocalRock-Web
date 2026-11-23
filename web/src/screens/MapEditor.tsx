@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
-import { ACTIVE_STATES, roomNameProblem } from '../../../shared/codes';
+import { ACTIVE_STATES, ROOM_TYPES, roomNameProblem } from '../../../shared/codes';
 import {
   FloorMaterial, MAX_MAP_COORD_MM, MAX_RESTRICTION_VERTICES, distanceToSegmentMm, isRoundCarpet, rectZone,
   resizeZoneFromCorner, restrictionVertexCount, roomAtNorm, rotateZone, thresholdCenterLine, thresholdStrip,
@@ -14,7 +14,7 @@ import { MapView, type CustomGesture, type MapViewApi } from '../map/MapView';
 import { WALL_COLOR, ZONE_COLORS, drawWall, drawZone, zonePath } from '../map/render';
 import { navigate, setLeaveGuard, type Route } from '../router';
 import { useVacuum } from '../store';
-import { ConfirmDialog, Empty, Field, IconButton, Panel, Spinner, isTypingTarget } from '../ui';
+import { ConfirmDialog, Empty, Field, IconButton, Panel, Select, Spinner, isTypingTarget } from '../ui';
 
 /*
  * Map editor, ported from LocalRock's MapEditScreen.kt.
@@ -517,10 +517,12 @@ export function MapEditorScreen({ duid }: { duid: string }) {
                 key={selectedRoom}
                 map={map}
                 segment={selectedRoom}
+                tag={snap.roomTags[selectedRoom] ?? null}
                 working={working}
                 enabled={blockedReason === null}
                 onClose={() => setSelectedRoom(null)}
                 onRename={(name) => void runEdit('Room renamed.', async () => { await call(duid, 'renameRoom', { segment: selectedRoom, name }); return null; })}
+                onType={(tag) => void runEdit('Room type set.', async () => { await call(duid, 'setRoomType', { segment: selectedRoom, tag }); return null; })}
                 onFloor={(choice) => void runEdit("Floor type set. The robot's map shows the change.", async () => {
                   const r = await call<{ confirmed: boolean }>(duid, 'setFloorMaterial', { segment: selectedRoom, material: choice.material, direction: choice.direction });
                   return r?.confirmed ? null : "Floor type sent. This robot's map doesn't report floor types, so LocalRock can't confirm it.";
@@ -619,13 +621,16 @@ export function MapEditorScreen({ duid }: { duid: string }) {
   );
 }
 
-function RoomPanel({ map, segment, working, enabled, onClose, onRename, onFloor, onSplit, onMerge }: {
+function RoomPanel({ map, segment, tag, working, enabled, onClose, onRename, onType, onFloor, onSplit, onMerge }: {
   map: ParsedMap;
   segment: number;
+  /** The robot's type tag for the room, or null when its room table doesn't list one. */
+  tag: number | null;
   working: boolean;
   enabled: boolean;
   onClose: () => void;
   onRename: (name: string) => void;
+  onType: (tag: number) => void;
   onFloor: (c: (typeof FLOOR_CHOICES)[number]) => void;
   onSplit: () => void;
   onMerge: () => void;
@@ -649,6 +654,17 @@ function RoomPanel({ map, segment, working, enabled, onClose, onRename, onFloor,
         </div>
         <button type="submit" className="btn secondary" style={{ marginBottom: problem !== null ? 20 : 0 }} disabled={!canRename}>Rename</button>
       </form>
+      <div className="col tight">
+        <span className="field-label">Room type</span>
+        <Select
+          label="Room type"
+          options={ROOM_TYPES.map((t): [number, string] => [t.tag, t.label])}
+          value={tag}
+          disabled={!canAct}
+          onChange={(v) => { if (v !== tag) onType(v); }}
+        />
+        <span className="muted tiny">The robot uses the type to adjust its cleaning in the smart modes. Picking one also names the room after it; a custom name keeps the type.</span>
+      </div>
       <div className="col tight">
         <span className="field-label">Floor type</span>
         <div className="segmented block wrap" role="group" aria-label="Floor type">

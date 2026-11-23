@@ -287,18 +287,55 @@ export function encodeGroundMaterialParams(segment: number, materialId: number, 
   return { data: [[segment, materialId, direction ?? NO_DIRECTION]] };
 }
 
-/** One row of the robot's segment table, as get_room_mapping returns it. */
+/** One row of the robot's segment table, as get_room_mapping returns it; tagId is null on firmware without a tag column. */
 export interface SegmentEntry {
   segment: number;
   roomId: string;
-  tagId: number;
+  tagId: number | null;
 }
 
-/** The whole table sorted by segment, like the official app sent it. */
+/**
+ * Tag for a segment the robot lists without one: a segment that gets its first table entry, or any
+ * row on firmware without a tag column. In the capture the official app gave the previously unlisted
+ * segment 24 tag 12 when the user named it.
+ */
+export const NEW_SEGMENT_TAG = 12;
+
+/**
+ * The robot's get_room_mapping answer as [segment, roomId, tag] rows, or [segment, roomId] rows on
+ * firmware without tags (S7 on 02.16.12, S4 on 02.06.26). An empty list means no room has been
+ * assigned yet (S7 Max Ultra, Qrevo Edge). Null means the answer is not a table this app can write
+ * back whole, so name_segment must not be sent; a table that mixes the two row shapes is one of those.
+ */
+export function parseSegmentTable(result: unknown): SegmentEntry[] | null {
+  if (!Array.isArray(result)) return null;
+  const first = result[0];
+  const tagged = Array.isArray(first) ? first.length >= 3 : undefined;
+  const out: SegmentEntry[] = [];
+  for (const row of result) {
+    if (!Array.isArray(row) || row.length < 2 || (row.length >= 3) !== tagged) return null;
+    const segment = asInt(row[0]);
+    const rawId = row[1];
+    if (segment === null || (typeof rawId !== 'string' && typeof rawId !== 'number')) return null;
+    let tagId: number | null = null;
+    if (row.length >= 3) {
+      tagId = asInt(row[2]);
+      if (tagId === null) return null;
+    }
+    out.push({ segment, roomId: String(rawId), tagId });
+  }
+  return out;
+}
+
+/**
+ * The whole table sorted by segment, like the official app sent it. Firmware without a tag column
+ * took 12 on a named segment (S7, 2026-11-15) and still lists no tag afterwards, so an untagged row
+ * is written back with it.
+ */
 export function nameSegmentData(table: SegmentEntry[]): JsonValue {
   return [...table]
     .sort((a, b) => a.segment - b.segment)
-    .map((e) => ({ iotRoomId: e.roomId, robotRoomId: e.segment, robotTagId: e.tagId }));
+    .map((e) => ({ iotRoomId: e.roomId, robotRoomId: e.segment, robotTagId: e.tagId ?? NEW_SEGMENT_TAG }));
 }
 
 /** The final name_segment answer: [{"oldId": 16, "newId": 16}, ...] as old -> new. */

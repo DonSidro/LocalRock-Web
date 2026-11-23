@@ -48,7 +48,6 @@ const READBACK_ATTEMPTS = 4;
 const READBACK_DELAY_MS = 2_000;
 const SPLIT_RETRY_DELAY_MS = 12_000;
 /** Tag the official app gave a segment that got its first table entry. */
-const NEW_SEGMENT_TAG = 12;
 const STATUS_READBACK_ATTEMPTS = 6;
 const STATUS_READBACK_DELAY_MS = 1_000;
 const STALE_LINK_FAILURE_THRESHOLD = 3;
@@ -117,7 +116,8 @@ export class VacuumRepository extends EventEmitter {
   private roomIds: number[] = [];
   private homeRoomNames = new Map<number, string>();
   private segmentToRoomId = new Map<number, number>();
-  private rawSegmentTable: C.SegmentEntry[] = [];
+  /** Null until read, or when the answer could not be parsed; empty when no room has been assigned yet. */
+  private rawSegmentTable: C.SegmentEntry[] | null = null;
   private consumables: ConsumableStatus | null = null;
   private cleanHistory: CleanRecord[] = [];
   private cleanSummary: CleanSummary | null = null;
@@ -464,23 +464,19 @@ export class VacuumRepository extends EventEmitter {
   async rooms(): Promise<V1Response> {
     const resp = await C.getRoomMapping(this.deps.session);
     const result = resp.result;
+    this.rawSegmentTable = parseSegmentTableOrNull(result);
+    this.changed();
     if (Array.isArray(result)) {
-      const table: C.SegmentEntry[] = [];
       const mapping = new Map<number, number>();
       for (const entry of result) {
         if (!Array.isArray(entry)) continue;
         const segment = asInt(entry[0]);
         if (segment === null) continue;
-        if (entry.length >= 3) {
-          const tag = asInt(entry[2]);
-          if (tag !== null) table.push({ segment, roomId: String(entry[1]), tagId: tag });
-        }
         if (entry.length >= 2) {
           const roomId = asInt(entry[1]);
           if (roomId !== null) mapping.set(segment, roomId);
         }
       }
-      this.rawSegmentTable = table;
       if (mapping.size > 0) {
         this.segmentToRoomId = mapping;
         this.applyRoomNames();
@@ -1102,7 +1098,7 @@ export class VacuumRepository extends EventEmitter {
     await C.loadMultiMap(this.deps.session, mapFlag);
     this.currentFloorFlagLocal = mapFlag;
     await this.refreshStatus();
-    this.rawSegmentTable = [];
+    this.rawSegmentTable = null;
     this.clearMap();
     try { await this.fetchMap(); } catch { /* the map loop retries */ }
   }
@@ -1126,11 +1122,33 @@ export class VacuumRepository extends EventEmitter {
       await this.fetchFloorMaps();
       if (this.floorMaps.some((m) => m.mapFlag === mapFlag)) throw new MapEditError(NOT_CONFIRMED);
       this.roomIds = [];
-      this.rawSegmentTable = [];
+      this.rawSegmentTable = null;
       this.clearMap();
     });
   }
 
+  /**
+   * Put mapFlag back to its on-robot backup; everything changed since the backup is lost. Only for the
+   * loaded map, the case that was captured. Confirmed by the map's saved time changing.
+   */
+  restoreFloorMapBackup(mapFlag: number): Promise<void> {
+    return this.editMutex.run(async () => {
+      const floor = await this.requireFloorMap(mapFlag);
+      if (floor.backupAt === null) throw new MapEditError('This map has no backup on the robot yet');
+      if (mapFlag !== this.currentFloorFlag()) throw new MapEditError('Load this map first, then restore its backup');
+      C.requireOk(await C.restoreMapBackup(this.deps.session, mapFlag), 'recover_multi_map');
+      let restored = false;
+      for (let attempt = 0; attempt < STATUS_READBACK_ATTEMPTS && !restored; attempt++) {
+        if (attempt > 0) await sleep(STATUS_READBACK_DELAY_MS);
+        try { await this.fetchFloorMaps(); } catch { /* try again */ }
+        const savedAt = this.floorMaps.find((m) => m.mapFlag === mapFlag)?.savedAt ?? null;
+        restored = savedAt !== null && savedAt !== floor.savedAt;
+      }
+      if (!restored) throw new MapEditError(NOT_CONFIRMED);
+      await this.refreshStatus();
+      this.rawSegmentTable = null;
+      try { await this.fetchMap(); } catch { /* the next poll fetches it */ }
+      try { await this.rooms(); } catch { /* names come with the next read */ }
     });
   }
 
@@ -1173,7 +1191,7 @@ export class VacuumRepository extends EventEmitter {
       if (!(await this.awaitStatus((s) => multiLevelEnabled(s) === enabled))) throw new MapEditError(NOT_CONFIRMED);
       try { await this.fetchFloorMaps(); } catch { /* best effort */ }
       if (!enabled) {
-        this.rawSegmentTable = [];
+        this.rawSegmentTable = null;
         try { await this.fetchMap(); } catch { /* best effort */ }
         try { await this.rooms(); } catch { /* best effort */ }
       }
@@ -1234,7 +1252,7 @@ export class VacuumRepository extends EventEmitter {
       const added = this.floorMaps.filter((m) => !before.has(m.mapFlag));
       if (added.length === 0) throw new MapEditError(stillUnsaved ? NOT_CONFIRMED : MAP_NOT_KEPT);
       await this.refreshStatus();
-      this.rawSegmentTable = [];
+      this.rawSegmentTable = null;
       try { await this.fetchMap(); } catch { /* best effort */ }
       try { await this.rooms(); } catch { /* best effort */ }
     });
@@ -1336,25 +1354,55 @@ export class VacuumRepository extends EventEmitter {
     });
   }
 
-  /** Point `segment` at cloud room `roomId` with name_segment, sending the whole table with one entry changed. */
-  assignRoom(segment: number, roomId: number): Promise<void> {
+  /** Fails when `segment` can't be given a room, so the caller can stop before it creates a cloud room that would be left unused. */
+  checkRoomTable(segment: number): Promise<void> {
+    return this.editMutex.run(async () => { await this.readSegmentTable(segment); });
+  }
+
+  private async readSegmentTable(segment: number): Promise<C.SegmentEntry[]> {
+    const map = this.editableMap();
+    if (!map.rooms.some((r) => r.id === segment)) throw new MapEditError('That room is not on the current map');
+    await this.rooms();
+    const table = this.rawSegmentTable;
+    if (!table) throw new MapEditError('The robot did not return its room table. Nothing was changed.');
+    return table;
+  }
+
+  /**
+   * Point `segment` at cloud room `roomId` with name_segment, sending the whole table with only this
+   * entry changed (and `tagId`, a room type's tag, when given). The robot may renumber segments in
+   * its answer; the check follows that. Confirmed by reading the table back.
+   */
+  assignRoom(segment: number, roomId: number, tagId: number | null = null): Promise<void> {
     return this.editMutex.run(async () => {
-      const map = this.editableMap();
-      if (!map.rooms.some((r) => r.id === segment)) throw new MapEditError('That room is not on the current map');
-      await this.rooms();
-      const table = this.rawSegmentTable;
-      if (table.length === 0) throw new MapEditError('The robot did not return its room table. Nothing was changed.');
+      const table = await this.readSegmentTable(segment);
       const existing = table.find((e) => e.segment === segment);
-      const entry: C.SegmentEntry = { segment, roomId: String(roomId), tagId: existing?.tagId ?? NEW_SEGMENT_TAG };
+      const entry: C.SegmentEntry = { segment, roomId: String(roomId), tagId: tagId ?? existing?.tagId ?? C.NEW_SEGMENT_TAG };
       const resp = await C.nameSegment(this.deps.session, [...table.filter((e) => e.segment !== segment), entry]);
       const finalSegment = C.parseSegmentRenumbering(resp.result).get(segment) ?? segment;
-      await this.rooms();
-      if (this.rawSegmentTable.find((e) => e.segment === finalSegment)?.roomId !== String(roomId)) throw new MapEditError(NOT_CONFIRMED);
+      // The table can lag the robot's answer by a moment, so look a few times before giving up.
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (attempt > 0) await sleep(STATUS_READBACK_DELAY_MS);
+        await this.rooms();
+        if (this.rawSegmentTable?.find((e) => e.segment === finalSegment)?.roomId === String(roomId)) return;
+      }
+      throw new MapEditError(NOT_CONFIRMED);
     });
+  }
+
+  /** Each room's type tag, as the robot's room table lists it. */
+  roomTags(): Record<number, number> {
+    const out: Record<number, number> = {};
+    for (const e of this.rawSegmentTable ?? []) if (e.tagId !== null) out[e.segment] = e.tagId;
+    return out;
   }
 }
 
 // ---- Parsing helpers ------------------------------------------------------------------------
+
+function parseSegmentTableOrNull(result: unknown): C.SegmentEntry[] | null {
+  return C.parseSegmentTable(result);
+}
 
 function num(v: unknown): number {
   return typeof v === 'number' && Number.isFinite(v) ? v : asInt(v) ?? 0;

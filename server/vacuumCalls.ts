@@ -152,6 +152,10 @@ export const CALLS: Record<string, Call> = {
     return { confirmed: await repo.setFloorMaterial(int(a['segment'], 'room', 0, 255), material, direction) };
   }),
   renameRoom: action((_repo, a, app, duid) => app.renameRoom(duid, int(a['segment'], 'room', 0, 255), str(a['name'], 'room name', 64))),
+  setRoomType: action((_repo, a, app, duid) => app.setRoomType(duid, int(a['segment'], 'room', 0, 255), int(a['tag'], 'room type', 0, 255))),
+
+  fetchRoutines: read((_repo, _a, app, duid) => app.routines(duid)),
+  runRoutine: action((_repo, a, app) => app.runRoutine(int(a['id'], 'routine', 0, Number.MAX_SAFE_INTEGER), str(a['name'], 'routine', 200))),
 
   cameraRpc: read(async (repo, a) => {
     const method = str(a['method'], 'method', 64);

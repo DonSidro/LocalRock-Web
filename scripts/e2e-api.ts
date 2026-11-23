@@ -197,6 +197,19 @@ async function main() {
   check(rename.ok, `room renamed through the server (${rename.error ?? 'ok'})`);
   const guest = await until('guest', () => maps.get(S8)?.rooms.find((r) => r.id === 23 && r.name === 'Guest room'));
   check(!!guest, 'map label shows the new room name');
+  const typed = await call(S8, 'setRoomType', { segment: 23, tag: 14 });
+  check(typed.ok, `room type set (${typed.error ?? 'ok'})`);
+  check((await until('kitchen', () => maps.get(S8)?.rooms.find((r) => r.id === 23 && r.name === 'Kitchen'))) !== null
+    && snapshots.get(S8)?.roomTags[23] === 14, 'room type names the room and sets its tag');
+  check((await call(S8, 'setRoomType', { segment: 23, tag: 99 })).ok === false, 'unknown room type refused');
+  const routines = await call(S8, 'fetchRoutines');
+  check(routines.ok && Array.isArray(routines.result) && routines.result.length === 2 && routines.result[0].name === 'After dinner', `routines listed (${routines.error ?? 'ok'})`);
+  const started = await call(S8, 'runRoutine', { id: 101, name: 'After dinner' });
+  check(started.ok && started.result === '"After dinner" started', `routine started (${started.error ?? started.result})`);
+  const blocked = await call(S8, 'runRoutine', { id: 102, name: 'Kitchen twice' });
+  check(!blocked.ok && /"After dinner" is still running/.test(blocked.error ?? ''), `second routine blocked (${blocked.error ?? 'ok'})`);
+  const stopped = await call(S8, 'runRoutine', { id: 101, name: 'After dinner' });
+  check(stopped.ok && stopped.result === 'Stopping "After dinner"', 'running the same routine again stops it');
   const merge = await call(S8, 'mergeRooms', { a: 24, b: 25 });
   check(merge.ok, `rooms merged and confirmed (${merge.error ?? 'ok'})`);
   // A vertical line through the merged room's label, in robot mm.

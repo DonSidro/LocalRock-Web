@@ -149,6 +149,28 @@ function parseJson(raw: RawResponse, what: string): Record<string, unknown> {
   throw new ApiError(raw.status, `${what}: the server did not return JSON (HTTP ${raw.status})`);
 }
 
+export interface SceneRunResult {
+  accepted: boolean;
+  status: string | null;
+  activeSceneName: string | null;
+}
+
+/** What to tell the user once the server has answered a run request; a refusal is thrown. */
+export function routineRunMessage(name: string, result: SceneRunResult): string {
+  if (!result.accepted) {
+    const active = result.activeSceneName;
+    throw new ApiError(409, result.status === 'routine_in_progress' && active !== null
+      ? `"${active}" is still running. Run it again to stop it first.`
+      : `The server did not start "${name}"${result.status ? ` (${result.status})` : ''}`);
+  }
+  return result.status === 'cancel_requested' ? `Stopping "${name}"` : `"${name}" started`;
+}
+
+function checkCode(json: Record<string, unknown>, raw: RawResponse, what: string): void {
+  const code = typeof json['code'] === 'number' ? json['code'] : 200;
+  if (code !== 200) throw new ApiError(code, `${what} failed: ${typeof json['msg'] === 'string' && json['msg'] ? json['msg'] : `HTTP ${raw.status}`}`);
+}
+
 /** {code, msg, data}: code 200 is success. */
 function apiData<T>(raw: RawResponse, what: string, errorType: typeof ApiError = ApiError): T {
   const json = parseJson(raw, what);
@@ -209,6 +231,35 @@ export class ServerApi {
   }
 
   /** Create a cloud room, or get the existing one with the same name (matched case-insensitively). */
+  /** The routines saved for one robot; local_roborock_server answers them in `result` (or `data`). */
+  async scenes(duid: string): Promise<Routine[]> {
+    const raw = await this.call('GET', `/user/scene/device/${encodeURIComponent(duid)}`);
+    if (raw.status < 200 || raw.status >= 300) throw new ApiError(raw.status, `Routines unavailable (HTTP ${raw.status})`);
+    const json = parseJson(raw, 'Routines');
+    checkCode(json, raw, 'Routines');
+    const list = (json['result'] ?? json['data']) as unknown;
+    if (!Array.isArray(list)) return [];
+    const out: Routine[] = [];
+    for (const s of list) {
+      if (typeof s !== 'object' || s === null) continue;
+      const o = s as Record<string, unknown>;
+      if (typeof o['id'] !== 'number' || typeof o['name'] !== 'string') continue;
+      out.push({ id: o['id'], name: o['name'], enabled: o['enabled'] !== false });
+    }
+    return out;
+  }
+
+  /** Runs a routine. Running the one already going stops it ("cancel_requested"); another on the same robot blocks it ("routine_in_progress"). */
+  async executeScene(id: number): Promise<SceneRunResult> {
+    const raw = await this.call('POST', `/user/scene/${id}/execute`);
+    if (raw.status < 200 || raw.status >= 300) throw new ApiError(raw.status, `The server could not run the routine (HTTP ${raw.status})`);
+    const json = parseJson(raw, 'Run routine');
+    checkCode(json, raw, 'Run routine');
+    const r = (json['result'] ?? json['data']) as Record<string, unknown> | undefined;
+    const text = (k: string) => (r && typeof r[k] === 'string' ? r[k] as string : null);
+    return { accepted: r?.['accepted'] !== false, status: text('status'), activeSceneName: text('activeSceneName') };
+  }
+
   async createRoom(homeId: number, name: string): Promise<Room> {
     const raw = await this.call('POST', `/user/homes/${homeId}/rooms`, { form: { name } });
     return apiData<Room>(raw, 'Create room');

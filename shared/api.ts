@@ -189,6 +189,13 @@ export type ServerMessage =
 /** Browser -> server over the WebSocket. */
 export type ClientMessage = { t: 'watch'; duid: string } | { t: 'unwatch'; duid: string };
 
+/** A routine ("scene") saved with the official app; the server runs its steps, so only the name is shown. */
+export interface Routine {
+  id: number;
+  name: string;
+  enabled: boolean;
+}
+
 export interface OnboardingDevice {
   duid: string;
   name: string;

@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import type { CleanTimer } from '../../../shared/api';
+import type { CleanTimer, Routine } from '../../../shared/api';
 import { Icon } from '../icons';
-import { useVacuum } from '../store';
+import { call } from '../api';
+import { toast, useVacuum } from '../store';
 import { ConfirmDialog, Dialog, Empty, Field, IconButton, Panel, Spinner, Switch } from '../ui';
 import { useRobotActions } from '../useRobot';
 
@@ -22,6 +23,60 @@ function formatDays(days: number[]): string {
 
 function formatTime(h: number, m: number): string {
   return new Date(2000, 0, 1, h, m).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+}
+
+/** Routines saved with the official app and kept by the server, which runs their steps itself. */
+function Routines({ duid }: { duid: string }) {
+  const { run, busy } = useRobotActions(duid);
+  const [state, setState] = useState<{ loading: boolean; list: Routine[] | null; error: string | null }>({ loading: true, list: null, error: null });
+  const load = async () => {
+    setState((s) => ({ ...s, loading: true }));
+    try {
+      setState({ loading: false, list: await call<Routine[]>(duid, 'fetchRoutines'), error: null });
+    } catch (e) {
+      setState({ loading: false, list: null, error: (e as Error).message });
+    }
+  };
+  useEffect(() => { void load(); }, [duid]); // eslint-disable-line react-hooks/exhaustive-deps
+  const runRoutine = async (r: Routine) => {
+    const message = await run<string>('runRoutine', { id: r.id, name: r.name });
+    if (message) toast(message);
+  };
+  return (
+    <>
+      <div className="tab-page-head">
+        <h2 className="grow">Routines</h2>
+        <button type="button" className="btn secondary sm" disabled={state.loading} onClick={() => void load()}>{state.loading ? <span className="spinner" /> : <Icon name="refresh" />}Refresh</button>
+      </div>
+      {state.error ? (
+        <Empty icon="warning" title="Routines unavailable" text={state.error}>
+          <button type="button" className="btn secondary" onClick={() => void load()}>Retry</button>
+        </Empty>
+      ) : !state.list ? (
+        <div className="empty"><Spinner big /></div>
+      ) : state.list.length === 0 ? (
+        <Empty icon="schedule" title="No routines" text="Routines made in the Roborock app and kept by your server show up here." />
+      ) : (
+        <Panel>
+          <table className="table">
+            <tbody>
+              {state.list.map((r) => (
+                <tr key={r.id} className={r.enabled ? '' : 'muted-row'}>
+                  <td className="strong">{r.name}</td>
+                  <td style={{ textAlign: 'right' }}>
+                    <button type="button" className="btn secondary sm" disabled={busy || !r.enabled} onClick={() => void runRoutine(r)}>
+                      <Icon name="play" />Run
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="muted small">The server runs each step. Run a routine that is going again to stop it.</p>
+        </Panel>
+      )}
+    </>
+  );
 }
 
 export function ScheduleTab({ duid }: { duid: string }) {
@@ -63,6 +118,7 @@ export function ScheduleTab({ duid }: { duid: string }) {
           </table>
         </Panel>
       )}
+      <Routines duid={duid} />
       {adding && <AddTimerDialog onClose={() => setAdding(false)} onAdd={(hour, minute, weekdays) => void run('createTimer', { hour, minute, weekdays }, 'Schedule added')} />}
       {deleting && (
         <ConfirmDialog
