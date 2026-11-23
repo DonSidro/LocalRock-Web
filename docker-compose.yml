@@ -1,0 +1,21 @@
+services:
+  localrock-web:
+    build: .
+    image: localrock-web:latest
+    container_name: localrock-web
+    restart: unless-stopped
+    ports:
+      - "${LOCALROCK_PORT:-8080}:8080"
+    environment:
+      # The page is reachable from your network, so it must have a password.
+      # Set it in a .env file next to this file: LOCALROCK_PASSWORD=choose-a-long-password
+      LOCALROCK_PASSWORD: ${LOCALROCK_PASSWORD:?Set LOCALROCK_PASSWORD in .env}
+      LOCALROCK_DEBUG: ${LOCALROCK_DEBUG:-}
+      # To trust your own CA for the server's HTTPS and MQTT, uncomment the volume below and this line:
+      # LOCALROCK_CA_FILE: /certs/ca.pem
+    volumes:
+      - localrock-data:/app/data
+      # - ./ca.pem:/certs/ca.pem:ro
+
+volumes:
+  localrock-data:

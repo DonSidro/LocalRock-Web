@@ -114,6 +114,28 @@ If your server uses a certificate this computer does not trust (self-signed or f
 either point `LOCALROCK_CA_FILE` at the CA certificate (preferred), or turn on "Allow self-signed
 certificates" on the server address screen. The latter turns off certificate checking for the
 server's HTTPS and MQTT.
+## Run with Docker Compose
+
+Run it on a computer on the same network as your local_roborock_server (a home server, NAS or
+Raspberry Pi works).
+
+```bash
+cp .env.example .env      # then edit .env and choose a long LOCALROCK_PASSWORD
+docker compose up -d --build
+```
+
+Open `http://<that computer's address>:8080` and enter the password. In a container the page
+listens on all interfaces, so the password is required; compose refuses to start without it.
+
+- Settings and the server session are kept in the `localrock-data` volume, so they survive
+  rebuilds and updates.
+- Set `LOCALROCK_PORT` in `.env` to publish another port.
+- To trust your own CA, put `ca.pem` next to `docker-compose.yml` and uncomment the two
+  `LOCALROCK_CA_FILE` lines in it.
+- Update with `git pull` followed by `docker compose up -d --build`.
+- **Add vacuum** sends its Wi-Fi packets from the container. It needs the Docker host itself to
+  join the robot's `roborock-vacuum-...` Wi-Fi, so it is easiest on a machine with Wi-Fi; a
+  headless server can do the rest and you can pair from a `npm start` copy on a laptop.
 
 ## Try it without a robot
 
