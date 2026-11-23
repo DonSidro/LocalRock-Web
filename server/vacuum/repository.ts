@@ -59,6 +59,8 @@ export interface RobotInfo {
   name: string;
   model: string | null;
   firmware: string | null;
+  featureSet: string | null;
+  newFeatureSet: string | null;
   supportsSmartPlan: boolean;
   supportsWaterSlide: boolean;
 }
@@ -121,7 +123,18 @@ export class VacuumRepository extends EventEmitter {
   private cleanSummary: CleanSummary | null = null;
   private timers: CleanTimer[] = [];
   private robotSettings: RobotSettings = { volume: 50, childLock: false, ledEnabled: true, carpetMode: 1 };
-  private dockSettings: DockSettings = { washMode: 1, washFreq: 0, autoEmptyMode: 0 };
+  private dockSettings: DockSettings = EMPTY_DOCK_SETTINGS;
+  /** The dryer answer as the robot gave it, so a write can send back every field it held. */
+  private dryerAnswer: Record<string, JsonValue> | null = null;
+  private valley: ValleySettings | null = null;
+  /** The feature flags the robot reports itself (app_get_init_status); null until it has answered. */
+  private robotNewFeatureSet: string | null = null;
+  private robotNewFeatureInfo: string | null = null;
+  private robotFlagsAsked = false;
+  private features: FeatureState[] = [];
+  private featuresLoading = false;
+  /** Which candidate shape each option last accepted, so later writes send one. */
+  private readonly featureShapes = new Map<string, number>();
   private dnd: DndSettings | null = null;
   private floorMaps: FloorMap[] = [];
   private floorMapsLoaded = false;
@@ -247,6 +260,10 @@ export class VacuumRepository extends EventEmitter {
           const fresh = await this.getStatus();
           failures = 0;
           if (fresh) this.applyStatus(mergeStatus(this.status, fresh));
+          if (!this.robotFlagsAsked) {
+            this.robotFlagsAsked = true;
+            void this.fetchRobotFeatureSet().catch(() => { this.robotFlagsAsked = false; });
+          }
         } catch (e) {
           if (e instanceof Aborted) throw e;
           failures++;
@@ -351,7 +368,13 @@ export class VacuumRepository extends EventEmitter {
     return loaded !== undefined && loaded !== UNSAVED_MAP_FLAG ? loaded : this.currentFloorFlagLocal;
   }
 
+  /** The robot's own flags win; the server's record is the fallback until the robot has answered. */
+  effectiveNewFeatureSet(): string | null {
+    return this.robotNewFeatureSet ?? this.info.newFeatureSet;
+  }
+
   snapshot(): VacuumSnapshot {
+    const flags = this.effectiveNewFeatureSet();
     return {
       ...this.info,
       status: { ...this.status },
@@ -932,6 +955,84 @@ export class VacuumRepository extends EventEmitter {
     this.changed();
   }
 
+  // ---- Robot options (BetaFeatures.kt) --------------------------------------------------------
+
+  async fetchRobotFeatureSet(): Promise<void> {
+    if (this.robotNewFeatureSet !== null && this.robotNewFeatureInfo !== null) return;
+    const result = C.requireOk(await C.getInitStatus(this.deps.session), 'app_get_init_status').result;
+    this.robotNewFeatureSet = featureSetFromInitStatus(result);
+    this.robotNewFeatureInfo = newFeatureInfoFromInitStatus(result);
+    this.changed();
+  }
+
+  /** Null when the robot did not reply at all, so a read that timed out is not mistaken for an answer. */
+  private async readFeature(d: FeatureDef): Promise<{ state: FeatureState; answered: boolean } | null> {
+    let resp: V1Response;
+    try {
+      resp = d.settingName ? await C.getRobotSetting(this.deps.session, d.settingName) : await this.deps.session.sendCommand(d.getMethod);
+    } catch {
+      return null;
+    }
+    const parsed = parseFeatureReply(d, resp.result);
+    return {
+      state: { id: d.id, value: parsed?.value ?? null, key: parsed?.key ?? null, reply: parsed?.reply ?? null },
+      answered: !resp.error,
+    };
+  }
+
+  /** Reads every option the robot's flags offer; stops at the first one the robot does not reply to, so an offline robot costs one timeout. */
+  async fetchFeatures(): Promise<void> {
+    try { await this.fetchRobotFeatureSet(); } catch { /* the server's flags stand in */ }
+    const defs = supportedFeatures(this.effectiveNewFeatureSet());
+    this.featuresLoading = true;
+    this.changed();
+    try {
+      const states: FeatureState[] = [];
+      for (const d of featureReadOrder(defs)) {
+        const read = await this.readFeature(d);
+        if (!read) break;
+        if (read.answered && featureToggleable(d, read.state.value)) states.push(read.state);
+      }
+      this.features = withoutReplaced(states.sort((a, b) => defs.findIndex((d) => d.id === a.id) - defs.findIndex((d) => d.id === b.id)));
+    } finally {
+      this.featuresLoading = false;
+      this.changed();
+    }
+  }
+
+  /**
+   * Writes one option: tries each parameter shape until the robot stops refusing the shape, starting
+   * with the one it took last time, then reads the option back so the page shows what the robot
+   * holds. Throws the robot's refusal, if any, after that.
+   */
+  async setFeature(id: string, value: number): Promise<void> {
+    const current = this.features.find((f) => f.id === id);
+    const d = featureDef(id);
+    if (!current || !d) throw new UserError('That option is not offered on this robot');
+    if (d.choices ? !d.choices.some((c) => c.value === value) : value !== 0 && value !== 1) throw new UserError('Invalid value for this option');
+    let method: string;
+    let sent: V1Response | null = null;
+    if (d.settingName) {
+      method = 'app_set_robot_setting';
+      sent = await C.setRobotSetting(this.deps.session, d.settingName, value);
+    } else {
+      method = d.setMethod;
+      // A switch on a bit mask (carpet first) still sends 0 or 1; the read keeps the whole value.
+      const candidates = featureSetParamCandidates(d, current, value);
+      if (candidates.length === 0) throw new UserError('Read the option again before changing it');
+      for (const i of betaSetTryOrder(candidates.length, this.featureShapes.get(id))) {
+        sent = await this.deps.session.sendCommandRaw(method, candidates[i] as JsonValue);
+        if (!sent.error) this.featureShapes.set(id, i);
+        if (!BETA_SHAPE_REFUSAL_CODES.has(errorCode(sent.error) ?? 0)) break;
+      }
+    }
+    // Read back before requireOk on purpose: a refused write still refreshes the row with the robot's real value.
+    const read = await this.readFeature(d);
+    if (read && read.answered && featureToggleable(d, read.state.value)) {
+      this.features = this.features.map((f) => (f.id === id ? read.state : f));
+      this.changed();
+    }
+    if (sent) C.requireOk(sent, method);
   }
 
   async fetchDnd(): Promise<void> {
@@ -1027,6 +1128,9 @@ export class VacuumRepository extends EventEmitter {
       this.roomIds = [];
       this.rawSegmentTable = [];
       this.clearMap();
+    });
+  }
+
     });
   }
 

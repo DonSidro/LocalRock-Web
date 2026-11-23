@@ -87,6 +87,10 @@ export interface VacuumSnapshot {
   name: string;
   model: string | null;
   firmware: string | null;
+  /** Decimal feature bits from the server, for DockCapabilities and the feature checks. */
+  featureSet: string | null;
+  /** Hex feature bits from the server. */
+  newFeatureSet: string | null;
   supportsSmartPlan: boolean;
   supportsWaterSlide: boolean;
   status: VacuumStatus;

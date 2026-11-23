@@ -501,7 +501,11 @@ function CleaningModePanel({ snap, rooms, busy, count, onCount, run, read }: {
     'MANUAL',
     ...((rooms.length > 0 || perRoom) ? ['PER_ROOM' as const] : []),
   ];
-  const [type, setType] = useState(() => ((water ?? WaterBoxMode.OFF) === WaterBoxMode.OFF ? 2 : fan === FanPower.QUIET ? 1 : 0));
+  const vacuumThenMop = s.cleanSequenceType === 1;
+  const supportsThenMop = isVacuumThenMopSupported(snap.newFeatureSet);
+  const efficiency = isCleanEfficiencySupported(snap.newFeatureSet);
+  // The tab follows what the robot reports, as the official app's does.
+  const type = vacuumThenMop ? 3 : (water ?? WaterBoxMode.OFF) === WaterBoxMode.OFF ? 2 : fan === FanPower.OFF ? 1 : 0;
   const [roomsOpen, setRoomsOpen] = useState(false);
 
   useEffect(() => { void read('fetchMopMode'); }, [read]);
@@ -512,13 +516,19 @@ function CleaningModePanel({ snap, rooms, busy, count, onCount, run, read }: {
     else if (p === 'MANUAL') void run('setCleanMotorMode', { fan: FanPower.BALANCED, water: snap.supportsWaterSlide ? WaterBoxMode.SLIDE_MEDIUM : WaterBoxMode.LOW, mop: MopRoute.STANDARD });
     else void run('setCleanMotorMode', { fan: FanPower.CUSTOM, water: WaterBoxMode.CUSTOM, mop: MopRoute.CUSTOM });
   };
-  const chooseType = (i: number) => {
-    setType(i);
-    const waterOff = (water ?? WaterBoxMode.OFF) === WaterBoxMode.OFF;
-    if (i === 0 && waterOff) void run('setWaterBoxMode', { level: WaterBoxMode.LOW });
-    if (i === 1) {
-      void run('setFanPower', { level: FanPower.QUIET });
-      if (waterOff) void run('setWaterBoxMode', { level: WaterBoxMode.LOW });
+  const chooseType = async (i: number) => {
+    if (i === type) return;
+    const f = i === 1 ? FanPower.OFF : baseFan;
+    const w = i === 2 ? WaterBoxMode.OFF : baseWater;
+    // Without CleanEfficiency, vacuum-then-mop takes only the Standard and Fast routes.
+    const m = i === 3 && !efficiency && baseRoute !== MopRoute.STANDARD && baseRoute !== MopRoute.FAST ? MopRoute.STANDARD : baseRoute;
+    if (i === 3 || vacuumThenMop) {
+      await run('setCleanSequenceType', { type: i === 3 ? 1 : 0, fan: f, water: w, mop: m, repeat: i === 3 && isVacuumThenMopRepeatSupported(snap.newFeatureSet) ? 1 : null });
+    } else if (f === FanPower.OFF) {
+      // The robot refuses suction off while water is also off, so water goes first.
+      if (await run('setWaterBoxMode', { level: w }) !== undefined) await run('setFanPower', { level: f });
+    } else if (await run('setFanPower', { level: f }) !== undefined) {
+      await run('setWaterBoxMode', { level: w });
     }
     if (i === 2) void run('setWaterBoxMode', { level: WaterBoxMode.OFF });
   };

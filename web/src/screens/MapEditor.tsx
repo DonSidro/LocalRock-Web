@@ -162,7 +162,8 @@ export function MapEditorScreen({ duid }: { duid: string }) {
   const restrictionsChanged = !restrictionsMatch(map, zones.filter((z) => z.kind === 'NO_GO'), map.noMopZones, walls);
   const vertices = restrictionVertexCount(walls.length, restrictionZones(zones).length);
   const editable = blockedReason === null && !working;
-  const toolEnabled = (t: Tool) => editable && (t === 'NO_GO' || t === 'WALL' ? saveBlocker === null : indexBlocker === null);
+  const unsupported = advertisedUnsupportedMapEdits(snap.featureSet, snap.newFeatureSet, map.carpetAreas.length > 0, map.thresholds.length > 0);
+  const toolEnabled = (t: Tool) => editable && (t === 'NO_GO' || t === 'WALL' ? saveBlocker === null : indexBlocker === null && !unsupported.includes(t));
   const selectedZone = selection?.type === 'zone' ? zones[selection.index] ?? null : null;
   const canModifySelection = editable && (selection?.type === 'wall'
     ? saveBlocker === null

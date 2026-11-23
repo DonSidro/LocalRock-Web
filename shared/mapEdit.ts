@@ -12,9 +12,46 @@ export function saveMapIndex(floorMaps: { mapFlag: number }[]): number | null {
 
 /** Every captured map edit named map index 0 on a robot with one saved map; anything else is unconfirmed. */
 export function mapIndexBlocker(mapIndex: number | null): string | null {
-  if (mapIndex === null) return 'Saving map edits is only supported on robots with a single saved map for now.';
-  if (mapIndex === 0) return null;
-  return `Saving map edits is only confirmed for map 0. This robot's map is ${mapIndex}.`;
+  return mapIndex === null ? 'Saving map edits is only supported on robots with a single saved map for now.' : null;
+}
+
+export type UnsupportedKind = 'CARPET' | 'THRESHOLD';
+
+/** new_feature_info bit for drawing carpet areas (python-roborock is_map_carpet_add_support). */
+const MAP_CARPET_ADD_BIT = 30;
+/** Masks over the last 8 characters of new_feature_info_str for thresholds (is_support_custom_door_sill / smart_door_sill). */
+const CUSTOM_DOOR_SILL_MASK = 32;
+const SMART_DOOR_SILL_MASK = 1024;
+
+/**
+ * Kinds the robot's own flags say it can't store, so the editor can grey their tools out before
+ * anything is drawn. An S7 on 02.16.12 reports neither carpet areas nor thresholds, and answers both
+ * commands with unknown_method. An unknown flag blocks nothing, and neither does a kind the map already
+ * holds: the robot plainly stores those.
+ */
+export function advertisedUnsupportedMapEdits(
+  newFeatureInfo: string | null, newFeatureInfoStr: string | null, mapHasCarpets: boolean, mapHasThresholds: boolean,
+): UnsupportedKind[] {
+  const out: UnsupportedKind[] = [];
+  if (newFeatureInfo !== null && /^\d+$/.test(newFeatureInfo) && ((BigInt(newFeatureInfo) >> BigInt(MAP_CARPET_ADD_BIT)) & 1n) === 0n && !mapHasCarpets) out.push('CARPET');
+  const low = newFeatureInfoStr && newFeatureInfoStr.length >= 8 ? parseInt(newFeatureInfoStr.slice(-8), 16) : NaN;
+  if (!Number.isNaN(low) && (low & (CUSTOM_DOOR_SILL_MASK | SMART_DOOR_SILL_MASK)) === 0 && !mapHasThresholds) out.push('THRESHOLD');
+  return out;
+}
+
+function unsupportedKindsText(kinds: UnsupportedKind[]): string {
+  return [kinds.includes('CARPET') ? 'carpet areas' : null, kinds.includes('THRESHOLD') ? 'thresholds' : null].filter(Boolean).join(' or ');
+}
+
+/** What to tell the user after a save in which the robot refused `refused`. */
+export function unsupportedMapEditMessage(refused: UnsupportedKind[], savedOther: boolean): string {
+  return `This robot doesn't support ${unsupportedKindsText(refused)}, so they were not saved.${savedOther ? ' Your other changes were saved.' : ''}`;
+}
+
+/** Note for the editor when the robot doesn't support some kinds, or null. */
+export function unsupportedMapEditNote(unsupported: UnsupportedKind[]): string | null {
+  const text = unsupportedKindsText(unsupported);
+  return text ? `This robot doesn't support ${text}.` : null;
 }
 
 const MOP_ONLY_AREAS_BLOCK = 23;

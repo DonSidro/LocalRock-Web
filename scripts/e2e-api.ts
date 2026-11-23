@@ -144,6 +144,44 @@ async function main() {
   check((await call(S8, 'resetConsumable', { field: 'filter_work_time' })).ok, 'filter reset');
   check((await call(S8, 'resetConsumable', { field: 'rm -rf' })).ok === false, 'unknown consumable refused');
 
+  // Robot options and the robot's own feature flags
+  check((await call(S8, 'fetchFeatures')).ok, 'robot options read');
+  const featureIds = () => (snapshots.get(S8)?.features ?? []).map((f) => f.id);
+  const featureVal = (id: string) => snapshots.get(S8)?.features.find((f) => f.id === id)?.value;
+  check((await until('features', () => featureIds().includes('cleaning_pattern'))) !== null, `options from the robot's own flags (${featureIds().join(',')})`);
+  check(featureIds().includes('right_brush_stretch') && featureIds().includes('collision_mode') && !featureIds().includes('avoid_collision')
+    && featureIds().includes('carpet_boost') && featureIds().includes('optimize_battery'), 'collision picker replaces the switch; ungated carpet boost answered');
+  check(snapshots.get(S8)!.supportsSmartPlan === false, 'SmartPlan still follows the flags');
+  check((await call(S8, 'setFeature', { id: 'right_brush_stretch', value: 0 })).ok && (await until('brush', () => featureVal('right_brush_stretch') === 0)) !== null, 'FlexiArm off (wrapped object shape)');
+  check((await call(S8, 'setFeature', { id: 'collision_mode', value: 2 })).ok && (await until('collision', () => featureVal('collision_mode') === 2)) !== null, 'less collision picked ({"status": n})');
+  check((await call(S8, 'setFeature', { id: 'collision_mode', value: 0 })).ok === false, 'a value the picker does not offer is refused');
+  check((await call(S8, 'setFeature', { id: 'carpet_boost', value: 0 })).ok && (await until('boost', () => featureVal('carpet_boost') === 0)) !== null, 'carpet boost off (whole object echoed)');
+  check((await call(S8, 'setFeature', { id: 'cleaning_pattern', value: 2 })).ok && (await until('pattern', () => featureVal('cleaning_pattern') === 2)) !== null, 'cleaning pattern through app_set_robot_setting');
+  check((await call(S8, 'setFeature', { id: 'optimize_battery', value: 1 })).ok && (await until('battery', () => featureVal('optimize_battery') === 1)) !== null, 'smart charging on (bare value)');
+  check((await call(S8, 'setFeature', { id: 'gap_deep_clean', value: 1 })).ok === false, 'an option the robot does not offer is refused');
+
+  // Dock settings
+  const dockOf = () => snapshots.get(S8)!.dockSettings;
+  const dock = dockOf();
+  check(dock.smartWash?.intervalSeconds === 900 && dock.mopDrying === true && dock.dryTimeSeconds === 10_800 && dock.washWaterTemperature === 2, `dock settings parsed (${JSON.stringify(dock)})`);
+  check(snapshots.get(S8)!.featureSet !== null && snapshots.get(S8)!.status.dockType === 8, 'feature set and dock type reported');
+  check((await call(S8, 'setWashFrequency', { mode: 0, intervalMinutes: 20 })).ok, 'wash every 20 min');
+  check((await call(S8, 'setWashFrequency', { mode: 1, intervalMinutes: null })).ok
+    && (await until('wash by room', () => dockOf().smartWash?.mode === 1 && dockOf().smartWash?.intervalSeconds === 1200)) !== null, 'wash by room keeps the interval');
+  check((await call(S8, 'setWashFrequency', { mode: 0, intervalMinutes: null })).ok === false, 'time-based washing needs an interval');
+  check((await call(S8, 'setDryTime', { seconds: 7200 })).ok, 'drying time set');
+  check((await call(S8, 'setMopDrying', { enabled: false })).ok, 'mop drying off');
+  check((await call(S8, 'fetchDockSettings')).ok
+    && (await until('dryer', () => dockOf().dryTimeSeconds === 7200 && dockOf().mopDrying === false)) !== null, 'dryer setting kept its time when switched off');
+  check((await call(S8, 'setWashWaterTemperature', { value: 1 })).ok, 'water temperature set');
+  check((await call(S8, 'setAutoEmptyMode', { mode: 4 })).ok && (await call(S8, 'setAutoEmptyMode', { mode: 9 })).ok === false, 'auto-empty mode checked');
+  const valleyOf = () => snapshots.get(S8)!.valley;
+  check((await call(S8, 'fetchValley')).ok && (await until('valley', () => valleyOf() && valleyOf()!.enabled === false)) !== null, 'off-peak window read');
+  check((await call(S8, 'setValley', { startHour: 23, startMinute: 0, endHour: 5, endMinute: 30 })).ok
+    && (await until('valley set', () => valleyOf()?.enabled && valleyOf()?.endMinute === 30)) !== null, 'off-peak window set');
+  check((await call(S8, 'disableValley')).ok && (await until('valley off', () => valleyOf()?.enabled === false)) !== null, 'off-peak window off');
+  const drain = await call(S8, 'emptyInbuiltWaterTank');
+  check(drain.ok, `water tank emptied while docked (${drain.error ?? 'ok'})`);
 
   // Map edits (legacy, single map 0)
   const noGo = { x0: 25000, y0: 26000, x1: 26000, y1: 26000, x2: 26000, y2: 25000, x3: 25000, y3: 25000, kind: 'NO_GO' };

@@ -21,6 +21,10 @@ export interface RobotConfig {
   productId: string;
   model: string;
   newFeatureSet: string;
+  /** Decimal feature bits; bit 25 offers the auto-empty modes. */
+  featureSet?: string;
+  /** The flags the robot itself reports in app_get_init_status, when they differ from the server's. */
+  robotNewFeatureSet?: string;
   fv: string;
   format: 'legacy' | 'b01';
 }
@@ -179,6 +183,46 @@ export class SimRobot {
     const s = this.status;
     switch (method) {
       case 'get_status': return respond({ result: [{ ...s, msg_ver: 2, msg_seq: 1 }] });
+      case 'app_get_init_status':
+        return respond({ result: [{ local_info: {}, feature_info: [111, 112], new_feature_info: 2 ** 25 + 2 ** 30 + 2 ** 3, new_feature_info_str: this.config.robotNewFeatureSet ?? this.config.newFeatureSet }] });
+      // FlexiArm side brush (bit 54): answers [{"status": n}] and takes the wrapped object.
+      case 'get_right_brush_stretch_status': return respond({ result: [{ status: this.opts.brush }] });
+      case 'set_right_brush_stretch_status': {
+        const v = Array.isArray(params) && typeof params[0] === 'object' ? (params[0] as Record<string, number>)['status'] : undefined;
+        if (v === undefined) return respond({ error: { code: -10007, message: 'invalid params' } });
+        this.opts.brush = v;
+        return respond(ok);
+      }
+      // Collision (bits 36 and 118): a bare number, written as {"status": n}.
+      case 'get_collision_avoid_status': return respond({ result: [this.opts.collision] });
+      case 'set_collision_avoid_status': {
+        const v = (p0 as Record<string, number> | undefined)?.['status'];
+        if (typeof v !== 'number') return respond({ error: { code: -10005, message: 'Invalid parameters' } });
+        this.opts.collision = v;
+        return respond(ok);
+      }
+      // Carpet boost: an object written back whole.
+      case 'get_carpet_mode': return respond({ result: [{ enable: this.opts.carpetBoost, current_high: 500, current_integral: 450, current_low: 400, stall_time: 10 }] });
+      case 'set_carpet_mode': {
+        const o = p0 as Record<string, number>;
+        if (o?.['stall_time'] !== 10) return respond({ error: { code: -10007, message: 'invalid params' } });
+        this.opts.carpetBoost = o['enable']!;
+        return respond(ok);
+      }
+      // Cleaning pattern (bit 70) through app_get/set_robot_setting.
+      case 'app_get_robot_setting': {
+        const name = (params as Record<string, string>)['name'];
+        if (name === 'clean_direction_status') return respond({ result: { clean_direction_status: this.opts.pattern } });
+        return respond({ error: { code: -10007, message: 'unknown setting' } });
+      }
+      case 'app_set_robot_setting': {
+        const o = params as Record<string, unknown>;
+        if (o['name'] !== 'clean_direction_status') return respond({ error: { code: -10007, message: 'unknown setting' } });
+        this.opts.pattern = Number(o['status']);
+        return respond(ok);
+      }
+      case 'get_optimize_battery_status': return respond({ result: [this.opts.battery] });
+      case 'set_optimize_battery_status': this.opts.battery = Number(p0); return respond(ok);
       case 'app_start': this.startCleaning(5); return respond(ok);
       case 'resume_zoned_clean': this.startCleaning(17); return respond(ok);
       case 'resume_segment_clean': this.startCleaning(18); return respond(ok);

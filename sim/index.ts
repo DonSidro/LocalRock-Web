@@ -30,14 +30,24 @@ function featureSet(bits: number[]): string {
   return nibbles.map((n) => n.toString(16)).join('').toUpperCase();
 }
 
+/** The bits set in a hex newFeatureSet. */
+function bitsOf(hex: string): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < hex.length; i++) {
+    const n = parseInt(hex[hex.length - 1 - i]!, 16);
+    for (let b = 0; b < 4; b++) if ((n >> b) & 1) out.push(i * 4 + b);
+  }
+  return out;
+}
+
 const robots = [
   new SimRobot({
     duid: 'SimS8ProUltra01', name: 'S8 Pro Ultra (simulated)', localKey: 'abcdefghijklmnop', productId: 'p-s8',
-    model: 'roborock.vacuum.a70', newFeatureSet: '00000048009EFFFE', fv: '02.33.88', format: 'legacy',
+    model: 'roborock.vacuum.a70', newFeatureSet: '00000048009EFFFE', robotNewFeatureSet: featureSet([...bitsOf('00000048009EFFFE'), 36, 54, 70, 74, 118]), featureSet: String(2 ** 25 + 2 ** 3), fv: '02.33.88', format: 'legacy',
   } satisfies RobotConfig),
   new SimRobot({
     duid: 'SimQrevoCurv02', name: 'Qrevo Curv (simulated)', localKey: 'qrstuvwxyz012345', productId: 'p-curv',
-    model: 'roborock.vacuum.a245', newFeatureSet: featureSet([55, 106]), fv: '03.11.02', format: 'b01',
+    model: 'roborock.vacuum.a245', newFeatureSet: featureSet([15, 34, 37, 48, 55, 67, 93, 102, 106, 109]), featureSet: String(2 ** 25), fv: '03.11.02', format: 'b01',
   } satisfies RobotConfig),
 ];
 
@@ -107,7 +117,7 @@ function home() {
     devices: [
       ...robots.map((r) => ({
         duid: r.config.duid, name: r.config.name, localKey: r.config.localKey, productId: r.config.productId,
-        online: true, newFeatureSet: r.config.newFeatureSet, fv: r.config.fv, sn: `SN${r.config.duid}`,
+        online: true, newFeatureSet: r.config.newFeatureSet, featureSet: r.config.featureSet ?? null, fv: r.config.fv, sn: `SN${r.config.duid}`,
       })),
       unpaired,
     ],

@@ -176,6 +176,7 @@ const EMPTY_MODES: Array<[number, string]> = [[0, 'Smart'], [1, 'Max suction'], 
 const SECTIONS: Array<[string, string]> = [
   ['robot', 'Robot'],
   ['dock', 'Dock'],
+  ['beta', 'Beta'],
   ['quiet', 'Do Not Disturb'],
   ['order', 'Cleaning order'],
   ['about', 'About'],
@@ -186,6 +187,7 @@ export function RobotSettingsTab({ snap, rooms, actions }: { snap: VacuumSnapsho
   const [found, setFound] = useState(false);
   useEffect(() => {
     void read('fetchRobotSettings');
+    void read('fetchFeatures');
     void read('fetchDockSettings');
     void read('fetchValley');
     void read('fetchDnd');
@@ -197,7 +199,7 @@ export function RobotSettingsTab({ snap, rooms, actions }: { snap: VacuumSnapsho
   return (
     <div className="tab-page settings-layout">
       <nav className="settings-nav" aria-label="Settings sections">
-        {SECTIONS.map(([id, label]) => <button key={id} type="button" onClick={() => jump(id)}>{label}</button>)}
+        {SECTIONS.filter(([id]) => sectionShown(snap, id)).map(([id, label]) => <button key={id} type="button" onClick={() => jump(id)}>{label}</button>)}
       </nav>
       <div className="settings-sections">
         <Panel title="Robot" id="settings-robot">
@@ -221,13 +223,33 @@ export function RobotSettingsTab({ snap, rooms, actions }: { snap: VacuumSnapsho
             <SettingRow title="Carpet mode" sub="What the robot does on carpet.">
               <Select label="Carpet mode" options={CARPET_MODES} value={r.carpetMode} disabled={busy} onChange={(v) => void run('setCarpetMode', { mode: v })} />
             </SettingRow>
+            <FeatureRows snap={snap} actions={actions} section="CARPET" />
           </div>
         </Panel>
+
+        {sectionHas(snap, 'FLOOR') && (
+          <Panel title="Floor cleaning" id="settings-floor">
+            <div className="setting-list"><FeatureRows snap={snap} actions={actions} section="FLOOR" /></div>
+          </Panel>
+        )}
 
         <Panel title="Dock" id="settings-dock">
           <DockSettingsPanel snap={snap} actions={actions} />
         </Panel>
 
+        {(sectionHas(snap, 'BETA') || snap.unlistedFeatures.length > 0) && (
+          <Panel title="Beta" id="settings-beta">
+            <div className="setting-list">
+              <FeatureRows snap={snap} actions={actions} section="BETA" />
+              {snap.unlistedFeatures.length > 0 && (
+                <SettingRow
+                  title="Also advertised by this robot"
+                  sub={`Features the robot reports that LocalRock has no controls for yet: ${snap.unlistedFeatures.map((f) => f.name ?? `bit ${f.bit}`).join(', ')}.`}
+                />
+              )}
+            </div>
+          </Panel>
+        )}
 
         <Panel title="Do Not Disturb" id="settings-quiet">
           <DndSettings snap={snap} actions={actions} />
@@ -246,6 +268,45 @@ export function RobotSettingsTab({ snap, rooms, actions }: { snap: VacuumSnapsho
         </Panel>
       </div>
     </div>
+  );
+}
+
+function sectionHas(snap: VacuumSnapshot, section: FeatureSection): boolean {
+  return snap.features.some((f) => featureDef(f.id)?.section === section);
+}
+
+function sectionShown(snap: VacuumSnapshot, id: string): boolean {
+  if (id === 'voice') return isVoiceAssistantSupported(snap.newFeatureSet);
+  if (id === 'floor') return sectionHas(snap, 'FLOOR');
+  if (id === 'obstacle') return sectionHas(snap, 'OBSTACLE');
+  if (id === 'beta') return sectionHas(snap, 'BETA') || snap.unlistedFeatures.length > 0;
+  return true;
+}
+
+/** The robot options on one settings section: a switch, or a picker for options with more than two values. */
+function FeatureRows({ snap, actions, section }: { snap: VacuumSnapshot; actions: Actions; section: FeatureSection }) {
+  const rows = snap.features.flatMap((f) => {
+    const d = featureDef(f.id);
+    return d && d.section === section ? [{ d, value: f.value }] : [];
+  });
+  return (
+    <>
+      {rows.map(({ d, value }) => d.choices ? (
+        <SettingRow key={d.id} title={d.title} sub={(value !== null ? d.choices.find((c) => c.value === value)?.description : undefined) ?? d.description}>
+          <Select
+            label={d.title}
+            options={[...d.choices.map((c): [number, string] => [c.value, c.label]), ...(value !== null && !d.choices.some((c) => c.value === value) ? [[value, choiceLabelFor(d.choices, value)] as [number, string]] : [])]}
+            value={value}
+            disabled={actions.busy}
+            onChange={(v) => void actions.run('setFeature', { id: d.id, value: v })}
+          />
+        </SettingRow>
+      ) : (
+        <SettingRow key={d.id} title={d.title} sub={d.description}>
+          <Switch label={d.title} checked={featureEnabled(d, value)} disabled={actions.busy} onChange={(on) => void actions.run('setFeature', { id: d.id, value: on ? 1 : 0 })} />
+        </SettingRow>
+      ))}
+    </>
   );
 }
 

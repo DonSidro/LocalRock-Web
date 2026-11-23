@@ -340,6 +340,8 @@ export class App extends EventEmitter {
       name: d.name,
       model: product?.model ?? null,
       firmware: d.fv ?? null,
+      featureSet: d.featureSet ?? null,
+      newFeatureSet: d.newFeatureSet ?? null,
       supportsSmartPlan: isSmartPlanSupported(d.newFeatureSet),
       supportsWaterSlide: isWaterSlideSupported(d.newFeatureSet),
     }, {

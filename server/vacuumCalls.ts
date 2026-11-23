@@ -106,6 +106,8 @@ export const CALLS: Record<string, Call> = {
   deleteTimer: action((repo, a) => repo.deleteTimer(str(a['id'], 'schedule', 64))),
 
   fetchRobotSettings: read((repo) => repo.fetchRobotSettings()),
+  fetchFeatures: read((repo) => repo.fetchFeatures()),
+  setFeature: action((repo, a) => repo.setFeature(str(a['id'], 'option', 64), int(a['value'], 'value', 0, 255))),
   setVolume: action((repo, a) => repo.setVolume(int(a['volume'], 'volume', 0, 100))),
   setChildLock: action((repo, a) => repo.setChildLock(bool(a['locked'], 'child lock'))),
   setLed: action((repo, a) => repo.setLed(bool(a['on'], 'LED'))),
