@@ -160,6 +160,8 @@ const IANA_TO_POSIX: Record<string, string> = {
   'America/Denver': 'MST7MDT,M3.2.0,M11.1.0',
   'America/Los_Angeles': 'PST8PDT,M3.2.0,M11.1.0',
   'America/Phoenix': 'MST7',
+  // UTC-4 all year, no daylight saving; New York would put schedules an hour off all winter.
+  'America/Puerto_Rico': 'AST4',
   'America/Anchorage': 'AKST9AKDT,M3.2.0,M11.1.0',
   'Pacific/Honolulu': 'HST10',
   'America/Toronto': 'EST5EDT,M3.2.0,M11.1.0',
@@ -180,7 +182,7 @@ const IANA_TO_POSIX: Record<string, string> = {
 
 const IANA_TO_COUNTRY: Record<string, string> = {
   'America/New_York': 'us', 'America/Chicago': 'us', 'America/Denver': 'us', 'America/Los_Angeles': 'us',
-  'America/Phoenix': 'us', 'America/Anchorage': 'us', 'Pacific/Honolulu': 'us', 'America/Toronto': 'us',
+  'America/Phoenix': 'us', 'America/Puerto_Rico': 'us', 'America/Anchorage': 'us', 'Pacific/Honolulu': 'us', 'America/Toronto': 'us',
   'America/Vancouver': 'us', 'America/Winnipeg': 'us', 'America/Edmonton': 'us', 'Europe/London': 'gb',
   'Europe/Berlin': 'de', 'Europe/Paris': 'fr', 'Europe/Amsterdam': 'nl', 'Asia/Shanghai': 'cn',
   'Asia/Tokyo': 'jp', 'Asia/Kolkata': 'in', 'Australia/Sydney': 'au', 'Australia/Melbourne': 'au', 'Australia/Perth': 'au',
@@ -192,6 +194,15 @@ export const posixTzFromIana = (iana: string) => IANA_TO_POSIX[iana.trim()] ?? '
 export const countryDomainFromIana = (iana: string) => IANA_TO_COUNTRY[iana.trim()] ?? 'us';
 
 /** Host of the server address with a trailing '/', minus a leading "api-". */
+/** Some vacuums only answer a hello keyed with the last 16 characters of their hotspot name (..._miap1A2B). */
+export function ssidPreKey(hotspotSsid: string): string | null {
+  const s = hotspotSsid.trim().replace(/^"|"$/g, '');
+  return s.length >= 16 && s.includes('_miap') ? s.slice(-16) : null;
+}
+
+/** The robot's camera and Matter requests are limited to this many characters of the server name, with the trailing slash. */
+export const CAMERA_NAME_LIMIT = 15;
+
 export function sanitizeStackServer(baseUrl: string): string {
   const trimmed = baseUrl.trim();
   if (!trimmed) throw new Error('Server URL is required');

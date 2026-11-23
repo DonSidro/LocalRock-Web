@@ -84,3 +84,15 @@ describe('server stack and timezones', () => {
     expect(posixTzFromIana('Mars/Base')).toBe('EST5EDT,M3.2.0,M11.1.0');
   });
 });
+
+describe('pairing keys', () => {
+  it('takes the last 16 characters of a _miap hotspot name', async () => {
+    const { ssidPreKey, posixTzFromIana, countryDomainFromIana } = await import('../server/onboarding/packets.js');
+    expect(ssidPreKey('roborock-vacuum-a70_miap1A2B')).toBe('uum-a70_miap1A2B');
+    expect(ssidPreKey('roborock-vacuum-a70_miap1A2B')).toHaveLength(16);
+    expect(ssidPreKey('"roborock-vacuum-a70_miap1A2B"')).toBe(ssidPreKey('roborock-vacuum-a70_miap1A2B'));
+    expect(ssidPreKey('roborock-vacuum-a70')).toBeNull();
+    expect(posixTzFromIana('America/Puerto_Rico')).toBe('AST4');
+    expect(countryDomainFromIana('America/Puerto_Rico')).toBe('us');
+  });
+});

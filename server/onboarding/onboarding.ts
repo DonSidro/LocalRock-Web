@@ -1,3 +1,4 @@
+import { execFile } from 'node:child_process';
 import { createSocket } from 'node:dgram';
 import type { OnboardingDevice, OnboardingState } from '../../shared/api.js';
 import { randomHex } from '../protocol/crypto.js';
@@ -7,7 +8,7 @@ import { sleep } from '../util.js';
 import { UserError } from '../vacuum/errors.js';
 import {
   RsaKeyPair, VACUUM_PAIRING_HOST, VACUUM_PAIRING_PORT, buildHelloPacket, buildWifiConfigPacket, countryDomainFromIana,
-  parseHelloResponse, posixTzFromIana, sanitizeStackServer,
+  parseHelloResponse, posixTzFromIana, sanitizeStackServer, ssidPreKey,
 } from './packets.js';
 
 /*
@@ -20,6 +21,16 @@ import {
  */
 
 const HELLO_TIMEOUT_MS = 5_000;
+
+/** The Wi-Fi this computer is joined to, best effort (Windows, macOS, Linux); null when it can't be read. */
+async function currentWifiName(): Promise<string | null> {
+  const run = (cmd: string, args: string[]) => new Promise<string>((resolve) => {
+    execFile(cmd, args, { timeout: 3_000, windowsHide: true }, (err, out) => resolve(err ? '' : String(out)));
+  });
+  if (process.platform === 'win32') return /^\s*SSID\s*:\s*(.+)$/m.exec(await run('netsh', ['wlan', 'show', 'interfaces']))?.[1]?.trim() ?? null;
+  if (process.platform === 'darwin') return /\bSSID: (.+)$/m.exec(await run('/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport', ['-I']))?.[1]?.trim() ?? null;
+  return (await run('iwgetid', ['-r'])).trim() || null;
+}
 const WIFI_ACK_TIMEOUT_MS = 5_000;
 const POLL_INTERVAL_MS = 5_000;
 const POLL_ATTEMPTS = 60;
@@ -83,6 +94,9 @@ export class Onboarding {
     this.set({ running: false, step: 'preparing', serverStatus: null, result: null, error: null });
     try {
       await this.api.adminLogin(adminPassword);
+      // Checked while still on the home network, where a broken stack is easy to report.
+      const problems = await this.api.stackProblems();
+      if (problems.length > 0) throw new UserError(`The server is not ready for a vacuum: ${problems.join('; ')}`);
       const session = await this.api.startOnboardingSession(duid);
       const id = session['session_id'];
       if (typeof id !== 'string' || !id) throw new UserError('Server did not return a session id');
@@ -95,7 +109,7 @@ export class Onboarding {
   }
 
   /** Step 2, joined to the robot's hotspot: hello, then the Wi-Fi details. Polling starts after. */
-  async send(ssid: string, password: string, timezone: string): Promise<void> {
+  async send(ssid: string, password: string, timezone: string, hotspotName: string | null = null): Promise<void> {
     if (this.state.running) throw new UserError('Pairing is already running');
     const sessionId = this.sessionId;
     if (!sessionId) throw new UserError('Start the pairing session first');
@@ -105,8 +119,11 @@ export class Onboarding {
     const sock = createSocket('udp4');
     try {
       const keys = RsaKeyPair.generate();
-      const helloReply = await udpExchange(buildHelloPacket(keys.publicKeyPem), HELLO_TIMEOUT_MS, sock);
-      if (!helloReply) throw new UserError(`The vacuum did not reply to hello within ${HELLO_TIMEOUT_MS / 1000} s. Is this computer connected to the robot's Wi-Fi (roborock-vacuum-...) and is the robot in pairing mode?`);
+      let helloReply = await udpExchange(buildHelloPacket(keys.publicKeyPem), HELLO_TIMEOUT_MS, sock);
+      // Some vacuums only accept a pre-key taken from their hotspot name.
+      const preKey = ssidPreKey(hotspotName ?? '') ?? ssidPreKey((await currentWifiName()) ?? '');
+      if (!helloReply && preKey) helloReply = await udpExchange(buildHelloPacket(keys.publicKeyPem, preKey), HELLO_TIMEOUT_MS, sock);
+      if (!helloReply) throw new UserError(`The vacuum did not reply to hello within ${HELLO_TIMEOUT_MS / 1000} s (tried the default key${preKey ? ' and the hotspot-name key' : ''}). Is this computer connected to the robot's Wi-Fi (roborock-vacuum-...) and is the robot in pairing mode?`);
       const sessionKey = parseHelloResponse(helloReply, keys);
       this.set({ step: 'sending-wifi' });
       const packet = buildWifiConfigPacket(sessionKey, {

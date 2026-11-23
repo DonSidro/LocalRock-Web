@@ -8,7 +8,7 @@ import type { ClientMessage, ServerMessage } from '../shared/api.js';
 import { App, toMapDto } from './app.js';
 import { config, isLoopbackHost } from './config.js';
 import { log } from './log.js';
-import { SUPPORTED_TIMEZONES } from './onboarding/packets.js';
+import { CAMERA_NAME_LIMIT, SUPPORTED_TIMEZONES, sanitizeStackServer } from './onboarding/packets.js';
 import { RobotCommandError, RobotSilentError, RobotTimeoutError, UserError, describeError } from './vacuum/errors.js';
 import { runCall } from './vacuumCalls.js';
 import { bool, obj, str } from './validate.js';
@@ -182,7 +182,12 @@ export function createHttp(app: App) {
   }));
 
   // ---- Add vacuum ----
-  web.get('/api/onboarding', wrap(async () => ({ state: app.onboarding.current(), timezones: SUPPORTED_TIMEZONES, hasAdminPassword: app.store.get().adminPassword !== null })));
+  web.get('/api/onboarding', wrap(async () => {
+    const base = app.store.get().serverBaseUrl;
+    let stackName: string | null = null;
+    try { stackName = base ? sanitizeStackServer(base) : null; } catch { /* shown without the warning */ }
+    return { state: app.onboarding.current(), timezones: SUPPORTED_TIMEZONES, hasAdminPassword: app.store.get().adminPassword !== null, stackName, stackNameLimit: CAMERA_NAME_LIMIT };
+  }));
   web.post('/api/onboarding/devices', wrap(async (req) => {
     const b = obj(req.body);
     const password = b['adminPassword'] === undefined || b['adminPassword'] === '' ? app.store.get().adminPassword : str(b['adminPassword'], 'admin password', 256);
@@ -202,7 +207,8 @@ export function createHttp(app: App) {
     const b = obj(req.body);
     const tz = str(b['timezone'], 'timezone', 64);
     if (!SUPPORTED_TIMEZONES.includes(tz)) throw new UserError('Pick a timezone from the list');
-    await app.onboarding.send(str(b['ssid'], 'Wi-Fi name', 64), str(b['password'], 'Wi-Fi password', 128), tz);
+    const hotspot = b['hotspot'] === undefined || b['hotspot'] === null || b['hotspot'] === '' ? null : str(b['hotspot'], 'hotspot name', 64);
+    await app.onboarding.send(str(b['ssid'], 'Wi-Fi name', 64), str(b['password'], 'Wi-Fi password', 128), tz, hotspot);
   }));
   web.post('/api/onboarding/cancel', wrap(async () => { app.onboarding.cancel(); }));
 

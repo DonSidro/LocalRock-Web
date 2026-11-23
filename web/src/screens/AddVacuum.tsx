@@ -12,17 +12,22 @@ import { Field, PageHeader, Spinner } from '../ui';
  */
 
 interface OnboardingInfo {
+  /** The name the robot will remember for the server, and the limit its camera and Matter requests have. */
+  stackName?: string | null;
+  stackNameLimit?: number;
   state: OnboardingState;
   timezones: string[];
   hasAdminPassword: boolean;
 }
 
-export function AddVacuumScreen() {
+export function AddVacuumScreen({ preselect = null }: { preselect?: string | null }) {
   const [info, setInfo] = useState<OnboardingInfo | null>(null);
   const [adminPassword, setAdminPassword] = useState('');
   const [devices, setDevices] = useState<OnboardingDevice[]>([]);
-  const [duid, setDuid] = useState<string | null>(null);
-  const [ssid, setSsid] = useState('');
+  const [duid, setDuid] = useState<string | null>(preselect);
+  // The home Wi-Fi name is remembered in this browser for the next robot (the password is not).
+  const [ssid, setSsid] = useState(() => { try { return localStorage.getItem('localrock.wifiSsid') ?? ''; } catch { return ''; } });
+  const [hotspot, setHotspot] = useState('');
   const [wifiPassword, setWifiPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [timezone, setTimezone] = useState(() => Intl.DateTimeFormat().resolvedOptions().timeZone);
@@ -65,7 +70,8 @@ export function AddVacuumScreen() {
 
   const send = async () => {
     setBusy(true);
-    await attempt(() => post('/api/onboarding/send', { ssid: ssid.trim(), password: wifiPassword, timezone }));
+    try { localStorage.setItem('localrock.wifiSsid', ssid.trim()); } catch { /* not kept */ }
+    await attempt(() => post('/api/onboarding/send', { ssid: ssid.trim(), password: wifiPassword, timezone, hotspot: hotspot.trim() || null }));
     await refresh();
     setBusy(false);
   };
@@ -119,6 +125,12 @@ export function AddVacuumScreen() {
               {(info?.timezones ?? []).map((tz) => <option key={tz} value={tz}>{tz}</option>)}
             </select>
           </Field>
+          <Field label="Robot hotspot name (optional)" hint="Some robots only answer with a key taken from their hotspot name (ending in _miap...). LocalRock reads it from this computer's Wi-Fi when it can.">
+            <input value={hotspot} placeholder="roborock-vacuum-a70_miap1A2B" onChange={(e) => setHotspot(e.target.value)} disabled={!prepared || state?.running} />
+          </Field>
+          {info?.stackName && info.stackNameLimit && info.stackName.length > info.stackNameLimit && (
+            <p className="muted small">The robot will remember this server as "{info.stackName}". Pairing works with that name, but the robot's camera and Matter requests are limited to {info.stackNameLimit} characters including the trailing slash, with no port. A name like api-r.example.com on port 443 fits.</p>
+          )}
           <button type="button" className="btn" disabled={busy || !prepared || state?.running || !ssid.trim() || !wifiPassword} onClick={() => void send()}>Send to robot</button>
         </section>
 

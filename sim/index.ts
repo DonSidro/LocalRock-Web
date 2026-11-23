@@ -217,6 +217,11 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse): Promise<vo
     adminCookies.add(c);
     return json(res, 200, { ok: true }, { 'Set-Cookie': `admin_session=${c}; HttpOnly; Path=/admin` });
   }
+  if (req.method === 'GET' && path === '/admin/api/status') {
+    return json(res, 200, { health: { services: [
+      { name: 'https_server', enabled: true, running: true }, { name: 'mqtt_tls_proxy', enabled: true, running: true }, { name: 'mqtt_backend_broker', enabled: true, running: true },
+    ] } });
+  }
   if (path.startsWith('/admin/api/onboarding')) {
     const cookie = /admin_session=([0-9a-f]+)/.exec(req.headers.cookie ?? '')?.[1];
     if (!cookie || !adminCookies.has(cookie)) return json(res, 401, { ok: false });

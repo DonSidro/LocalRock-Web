@@ -219,7 +219,7 @@ function Routes({ route }: { route: Route }) {
   switch (route.name) {
     case 'devices': return <DeviceListScreen />;
     case 'settings': return <AppSettingsScreen />;
-    case 'add': return <AddVacuumScreen />;
+    case 'add': return <AddVacuumScreen key={route.duid ?? ''} preselect={route.duid ?? null} />;
     case 'vacuum': return <VacuumWorkspace key={route.duid} duid={route.duid} tab={route.tab} tool={route.tool ?? 'rooms'} />;
   }
 }

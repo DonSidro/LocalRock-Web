@@ -324,6 +324,29 @@ export class ServerApi {
     if (raw.status < 200 || raw.status >= 300) throw new ApiError(raw.status, `Admin login failed (HTTP ${raw.status})`);
   }
 
+  /**
+   * Names of the stack services that are not running, or empty when the stack can take a vacuum. A server
+   * without the status endpoint (older) is not checked.
+   */
+  async stackProblems(): Promise<string[]> {
+    let r: Record<string, unknown>;
+    try {
+      r = await this.admin('GET', '/admin/api/status', 'Read server status');
+    } catch (e) {
+      if (e instanceof ApiError && e.responseCode === 404) return [];
+      throw e;
+    }
+    const services = (r['health'] as Record<string, unknown> | undefined)?.['services'];
+    if (!Array.isArray(services)) return ['the server did not report its service health'];
+    return ['https_server', 'mqtt_tls_proxy', 'mqtt_backend_broker'].flatMap((name) => {
+      const s = services.find((x) => typeof x === 'object' && x !== null && (x as Record<string, unknown>)['name'] === name) as Record<string, unknown> | undefined;
+      if (!s) return [`${name} is missing`];
+      if (s['enabled'] === false) return [`${name} is disabled`];
+      if (s['running'] !== true) return [`${name} is not running${typeof s['detail'] === 'string' && s['detail'] ? ` (${s['detail']})` : ''}`];
+      return [];
+    });
+  }
+
   async onboardingDevices(): Promise<unknown[]> {
     const r = await this.admin('GET', '/admin/api/onboarding/devices', 'List vacuums');
     return Array.isArray(r['devices']) ? r['devices'] : [];
