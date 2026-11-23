@@ -1010,6 +1010,30 @@ export class VacuumRepository extends EventEmitter {
     C.requireOk(await C.emptyInbuiltWaterTank(this.deps.session), C.APP_EMPTY_INBUILT_WATER_TANK);
   }
 
+  /** Sends the robot looking for the pet; refused unless it is docked and idle. */
+  async startPetSearch(): Promise<void> {
+    const fresh = await this.getStatus();
+    if (!fresh) throw new UserError("The robot's current status is unavailable");
+    this.applyStatus(mergeStatus(this.status, fresh));
+    if (!isDockedAndIdle(fresh)) throw new UserError('Dock the robot and finish its current task before looking for your pet');
+    C.requireOk(await C.startPetSearch(this.deps.session), 'app_start_pet_patrol');
+  }
+
+  async matterStatus(): Promise<MatterInfo | null> {
+    return parseMatterStatus(C.requireOk(await C.getMatterStatus(this.deps.session), 'matter.get_status').result);
+  }
+
+  async requestMatterKey(): Promise<void> {
+    if (!matterKeyRequestAllowed((await this.matterStatus())?.state ?? null)) {
+      throw new UserError('The robot has joined a Matter platform; a new key could end that pairing');
+    }
+    C.requireOk(await C.downloadMatterKey(this.deps.session), 'matter.dnld_key');
+  }
+
+  async resetMatter(): Promise<void> {
+    C.requireOk(await C.resetMatter(this.deps.session), 'matter.reset');
+  }
+
   async fetchValley(): Promise<void> {
     let o: Record<string, unknown> | null = null;
     try { o = firstObject(C.requireOk(await C.getValleyElectricityTimer(this.deps.session), 'get_valley_electricity_timer').result); } catch { /* not offered */ }

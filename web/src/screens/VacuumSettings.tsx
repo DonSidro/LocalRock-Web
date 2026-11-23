@@ -185,6 +185,7 @@ const SECTIONS: Array<[string, string]> = [
 export function RobotSettingsTab({ snap, rooms, actions }: { snap: VacuumSnapshot; rooms: MapRoom[]; actions: Actions }) {
   const { run, read, busy } = actions;
   const [found, setFound] = useState(false);
+  const [matterOpen, setMatterOpen] = useState(false);
   useEffect(() => {
     void read('fetchRobotSettings');
     void read('fetchFeatures');
@@ -218,6 +219,16 @@ export function RobotSettingsTab({ snap, rooms, actions }: { snap: VacuumSnapsho
             <SettingRow title="Status light" sub="The light on top of the robot.">
               <Switch label="Status light" checked={r.ledEnabled} disabled={busy} onChange={(v) => void run('setLed', { on: v })} />
             </SettingRow>
+            <FeatureRows snap={snap} actions={actions} section="ROBOT" />
+            {isMatterSupported(snap.newFeatureSet) && (
+              <SettingRow title="Matter" sub="Add the robot to a smart home app with its Matter setup code.">
+                <button type="button" className="btn secondary sm" onClick={() => setMatterOpen(true)}><Icon name="qr" />Set up</button>
+              </SettingRow>
+            )}
+          </div>
+          {matterOpen && <MatterDialog duid={snap.duid} onClose={() => setMatterOpen(false)} />}
+        </Panel>
+
         <Panel title="Carpet" id="settings-carpet">
           <div className="setting-list">
             <SettingRow title="Carpet mode" sub="What the robot does on carpet.">

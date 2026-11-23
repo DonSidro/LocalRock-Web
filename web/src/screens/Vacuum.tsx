@@ -16,6 +16,7 @@ import {
   SettingRow, Spinner, Switch, formatArea, formatDuration, useShortcuts,
 } from '../ui';
 import { useRobotActions } from '../useRobot';
+import { isPetSearchSupported } from '../../../shared/matter';
 import { CameraScreen } from './Camera';
 import { MapEditorScreen } from './MapEditor';
 import { RemoteScreen } from './Remote';
@@ -63,6 +64,7 @@ export function VacuumWorkspace({ duid, tab, tool }: { duid: string; tab: VacTab
   const [mapsOpen, setMapsOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [found, setFound] = useState(false);
+  const [findPet, setFindPet] = useState(false);
 
   const action = snap ? primaryAction(snap) : 'clean';
   const primary = () => {
@@ -111,6 +113,7 @@ export function VacuumWorkspace({ duid, tab, tool }: { duid: string; tab: VacTab
               items={[
                 { label: found ? 'Beeping...' : 'Find robot', icon: 'find', onClick: () => { setFound(true); setTimeout(() => setFound(false), 4_000); void run('findMe'); } },
                 { label: 'Manage maps', icon: 'layers', onClick: () => setMapsOpen(true) },
+                ...(isPetSearchSupported(snap.newFeatureSet) ? [{ label: 'Find my pet', icon: 'pets' as const, onClick: () => setFindPet(true) }] : []),
                 { label: 'Keyboard shortcuts', icon: 'keyboard', onClick: () => setHelpOpen(true) },
               ]}
             />
@@ -167,6 +170,15 @@ export function VacuumWorkspace({ duid, tab, tool }: { duid: string; tab: VacTab
       </div>
 
       {mapsOpen && <MapsDialog snap={snap} busy={busy} run={run} read={actions.read} onClose={() => setMapsOpen(false)} />}
+      {findPet && (
+        <ConfirmDialog
+          title="Find my pet?"
+          text="The robot leaves its dock and patrols the home with its camera. It can only start while docked and not cleaning."
+          confirm="Start"
+          onConfirm={() => void run('findPet', {}, 'Looking for your pet')}
+          onClose={() => setFindPet(false)}
+        />
+      )}
       {helpOpen && <ShortcutsDialog onClose={() => setHelpOpen(false)} />}
     </div>
   );

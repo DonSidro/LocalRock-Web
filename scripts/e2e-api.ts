@@ -260,6 +260,27 @@ async function main() {
   check(snapshots.get(CURV)!.supportsSmartPlan && snapshots.get(CURV)!.status.fanPower === 110, 'SmartPlan supported and active');
   const b01edit = await call(CURV, 'saveMapEdits', { noGoZones: [], walls: [], carpets: [], thresholds: [] });
   check(!b01edit.ok && /format/.test(b01edit.error ?? ''), 'B01 map editing refused');
+  // Matter and Find my pet (flags 67 and 48 on the Curv)
+  const matter0 = await call(CURV, 'matterStatus');
+  check(matter0.ok && matter0.result?.state === 'KeyNotExit', `Matter status read (${matter0.error ?? matter0.result?.state})`);
+  check((await call(CURV, 'matterRequestKey')).ok, 'Matter key requested');
+  let matterReady: { state: string; qrPayload: string | null; manualCode: string | null } | null = null;
+  for (let i = 0; i < 10 && !matterReady; i++) {
+    const r = await call(CURV, 'matterStatus');
+    if (r.ok && r.result?.state === 'Ready') matterReady = r.result;
+    else await new Promise((res) => setTimeout(res, 1000));
+  }
+  check(!!matterReady?.qrPayload && /^\d{11}$/.test(matterReady.manualCode ?? ''), 'Matter setup code arrives after the key download');
+  const pet = await call(CURV, 'findPet');
+  check(pet.ok && (await until('patrol', () => snapshots.get(CURV)?.status.state === 32)) !== null, `pet search started from the dock (${pet.error ?? 'ok'})`);
+  check((await call(CURV, 'findPet')).ok === false, 'pet search refused while not docked');
+  await until('back on dock', () => snapshots.get(CURV)?.status.state === 8);
+  const thenMop = await call(CURV, 'setCleanSequenceType', { type: 1, fan: 102, water: 202, mop: 300, repeat: 1 });
+  check(thenMop.ok && (await until('then mop', () => snapshots.get(CURV)?.status.cleanSequenceType === 1)) !== null, `vacuum then mop on (${thenMop.error ?? 'ok'})`);
+  check((await call(CURV, 'setCleanMotorMode', { fan: 104, water: 202, mop: 300 })).ok
+    && (await until('then mop kept', () => snapshots.get(CURV)?.status.fanPower === 104 && snapshots.get(CURV)?.status.cleanSequenceType === 1)) !== null, 'a suction change keeps vacuum then mop');
+  check((await call(CURV, 'setCleanSequenceType', { type: 0, fan: 110, water: 209, mop: 306 })).ok
+    && (await until('then mop off', () => snapshots.get(CURV)?.status.cleanSequenceType === 0)) !== null, 'back to SmartPlan leaves vacuum then mop');
 
   // Add vacuum: server steps work; the hotspot step fails cleanly without a robot at 192.168.8.1.
   const obDevices = await api('/api/onboarding/devices', { adminPassword: 'admin' });

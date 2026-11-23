@@ -76,6 +76,10 @@ export const CALLS: Record<string, Call> = {
   setWashWaterTemperature: action((repo, a) => repo.setWashWaterTemperature(int(a['value'], 'water temperature', 0, 2))),
   emptyInbuiltWaterTank: action((repo) => repo.emptyInbuiltWaterTank()),
   fetchValley: read((repo) => repo.fetchValley()),
+  findPet: action((repo) => repo.startPetSearch()),
+  matterStatus: read((repo) => repo.matterStatus()),
+  matterRequestKey: read((repo) => repo.requestMatterKey()),
+  matterReset: read((repo) => repo.resetMatter()),
   setValley: action((repo, a) => repo.setValley(int(a['startHour'], 'hour', 0, 23), int(a['startMinute'], 'minute', 0, 59), int(a['endHour'], 'hour', 0, 23), int(a['endMinute'], 'minute', 0, 59))),
   disableValley: action((repo) => repo.disableValley()),
 

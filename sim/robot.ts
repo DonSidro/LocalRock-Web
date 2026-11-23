@@ -183,6 +183,26 @@ export class SimRobot {
     const s = this.status;
     switch (method) {
       case 'get_status': return respond({ result: [{ ...s, msg_ver: 2, msg_seq: 1 }] });
+      // Matter: the key "downloads" over two polls, then a code is on offer.
+      case 'matter.get_status': {
+        if (this.matter.state === 'KeyDownloading' && Date.now() >= this.matter.readyAt) {
+          this.matter.state = 'Ready';
+          this.matter.code = String(10_000_000_000 + Math.floor(Math.random() * 89_999_999_999));
+        }
+        const ready = this.matter.state === 'Ready' || this.matter.state === 'Joined';
+        return respond({ result: { status: this.matter.state, ...(ready ? { ManualPairingCode: this.matter.code, QrCode: `MT:Y.K90${this.matter.code.slice(0, 8)}0648G00` } : {}) } });
+      }
+      case 'matter.dnld_key':
+        if (this.matter.state === 'Joined') return respond({ error: { code: -10007, message: 'joined' } });
+        this.matter.state = 'KeyDownloading';
+        this.matter.readyAt = Date.now() + 2_500;
+        return respond(ok);
+      case 'matter.reset': this.matter.state = 'KeyNotExit'; return respond(ok);
+      case 'app_start_pet_patrol':
+        if (s['in_cleaning'] !== 0 || (s['state'] !== 8 && s['state'] !== 100)) return respond({ error: { code: -10007, message: 'busy' } });
+        this.setState(32);
+        setTimeout(() => this.setState(8), 6_000);
+        return respond(ok);
       case 'app_get_init_status':
         return respond({ result: [{ local_info: {}, feature_info: [111, 112], new_feature_info: 2 ** 25 + 2 ** 30 + 2 ** 3, new_feature_info_str: this.config.robotNewFeatureSet ?? this.config.newFeatureSet }] });
       // FlexiArm side brush (bit 54): answers [{"status": n}] and takes the wrapped object.
