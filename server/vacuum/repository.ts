@@ -680,7 +680,7 @@ export class VacuumRepository extends EventEmitter {
   }
 
   async setMopMode(mode: number): Promise<void> {
-    await C.setMopMode(this.deps.session, mode);
+    await this.setOneMotorMode('set_mop_mode', await C.setMopMode(this.deps.session, mode), (m) => ({ ...m, mop: mode }));
     this.mopMode = mode;
     this.changed();
   }
@@ -688,6 +688,16 @@ export class VacuumRepository extends EventEmitter {
   /** Switches suction, water and route in one command; the only way in or out of SmartPlan. */
   async setCleanMotorMode(fan: number, water: number, mop: number): Promise<void> {
     C.requireOk(await C.setCleanMotorMode(this.deps.session, fan, water, mop), 'set_clean_motor_mode');
+    // All three go out together, so the next change must start from these, not wait for a status poll.
+    this.status = { ...this.status, fanPower: fan, waterBoxCustomMode: water };
+    this.mopMode = mop;
+    this.changed();
+  }
+
+  /** Vacuum-then-mop on (1) or off (0); set_clean_motor_mode then keeps seq_type as it is. */
+  async setCleanSequenceType(type: number, fan: number, water: number, mop: number, repeat: number | null): Promise<void> {
+    C.requireOk(await C.setCleanSequenceType(this.deps.session, type, fan, water, mop, repeat), 'app_set_clean_sequence_type');
+    this.status = { ...this.status, cleanSequenceType: type, fanPower: fan, waterBoxCustomMode: water };
     this.mopMode = mop;
     this.changed();
   }

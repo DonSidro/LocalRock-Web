@@ -237,7 +237,8 @@ function Overview({ duid, snap, map, tool, run, read, busy, selected, setSelecte
     const picked = selected;
     setSessionRooms(picked);
     setSelected(() => []);
-    void run('cleanRooms', { rooms: picked, repeat: count });
+    // Vacuum-then-mop has its own repeat; a second pass is not offered there.
+    void run('cleanRooms', { rooms: picked, repeat: snap.status.cleanSequenceType === 1 ? 1 : count });
   };
   const cleanZones = async () => {
     const ok = await run('cleanZones', { zones: zones.map((z) => ({ ...z, times: zoneTimes })) }, 'Zone cleaning started');
@@ -510,11 +511,19 @@ function CleaningModePanel({ snap, rooms, busy, count, onCount, run, read }: {
 
   useEffect(() => { void read('fetchMopMode'); }, [read]);
 
+  // What a change starts from: the robot's codes, with an off one replaced by the usual default.
+  const baseFan = fan !== undefined && fan !== FanPower.OFF ? fan : FanPower.BALANCED;
+  const baseWater = water !== undefined && water !== WaterBoxMode.OFF ? water : snap.supportsWaterSlide ? WaterBoxMode.SLIDE_MEDIUM : WaterBoxMode.LOW;
+  const baseRoute = route ?? MopRoute.STANDARD;
+
   const choosePlan = (p: Plan) => {
     if (p === plan) return;
-    if (p === 'SMART') void run('setCleanMotorMode', { fan: FanPower.SMART, water: WaterBoxMode.SMART, mop: MopRoute.SMART });
-    else if (p === 'MANUAL') void run('setCleanMotorMode', { fan: FanPower.BALANCED, water: snap.supportsWaterSlide ? WaterBoxMode.SLIDE_MEDIUM : WaterBoxMode.LOW, mop: MopRoute.STANDARD });
-    else void run('setCleanMotorMode', { fan: FanPower.CUSTOM, water: WaterBoxMode.CUSTOM, mop: MopRoute.CUSTOM });
+    const [f, w, m] = p === 'SMART' ? [FanPower.SMART, WaterBoxMode.SMART, MopRoute.SMART]
+      : p === 'MANUAL' ? [FanPower.BALANCED, snap.supportsWaterSlide ? WaterBoxMode.SLIDE_MEDIUM : WaterBoxMode.LOW, MopRoute.STANDARD]
+        // The three codes the official app sent for its Customize tab.
+        : [FanPower.CUSTOM, WaterBoxMode.CUSTOM, MopRoute.CUSTOM];
+    if (vacuumThenMop) void run('setCleanSequenceType', { type: 0, fan: f, water: w, mop: m });
+    else void run('setCleanMotorMode', { fan: f, water: w, mop: m });
   };
   const chooseType = async (i: number) => {
     if (i === type) return;
@@ -530,8 +539,11 @@ function CleaningModePanel({ snap, rooms, busy, count, onCount, run, read }: {
     } else if (await run('setFanPower', { level: f }) !== undefined) {
       await run('setWaterBoxMode', { level: w });
     }
-    if (i === 2) void run('setWaterBoxMode', { level: WaterBoxMode.OFF });
   };
+  // In vacuum-then-mop every change carries all three, which keeps seq_type at 1.
+  const setFan = (level: number) => void (vacuumThenMop ? run('setCleanMotorMode', { fan: level, water: baseWater, mop: baseRoute }) : run('setFanPower', { level }));
+  const setWater = (level: number) => void (vacuumThenMop ? run('setCleanMotorMode', { fan: baseFan, water: level, mop: baseRoute }) : run('setWaterBoxMode', { level }));
+  const setRoute = (mode: number) => void (vacuumThenMop ? run('setCleanMotorMode', { fan: baseFan, water: baseWater, mop: mode }) : run('setMopMode', { mode }));
 
   const passes = (
     <SettingRow title="Passes">
@@ -540,19 +552,23 @@ function CleaningModePanel({ snap, rooms, busy, count, onCount, run, read }: {
   );
   const suction = (
     <SettingRow title="Suction">
-      <Select label="Suction" options={FAN_OPTIONS} value={fan} disabled={busy} onChange={(level) => void run('setFanPower', { level })} />
+      <Select label="Suction" options={FAN_OPTIONS} value={fan} disabled={busy} onChange={setFan} />
     </SettingRow>
   );
+  const waterOptions = type === 3 ? WATER_OPTIONS.filter(([c]) => c !== WaterBoxMode.OFF) : WATER_OPTIONS;
   const waterRow = (
     <SettingRow title="Water flow">
-      <Select label="Water flow" options={WATER_OPTIONS} value={normalizeWaterMode(water)} disabled={busy} onChange={(level) => void run('setWaterBoxMode', { level })} />
+      <Select label="Water flow" options={waterOptions} value={normalizeWaterMode(water)} disabled={busy} onChange={setWater} />
     </SettingRow>
   );
+  const routeOptions = type === 3 && !efficiency ? ROUTE_OPTIONS.filter(([c]) => c === MopRoute.STANDARD || c === MopRoute.FAST) : ROUTE_OPTIONS;
   const routeRow = (
-    <SettingRow title="Mop route">
-      <Select label="Mop route" options={ROUTE_OPTIONS} value={route} disabled={busy} onChange={(mode) => void run('setMopMode', { mode })} />
+    <SettingRow title="Route">
+      <Select label="Route" options={routeOptions} value={route} disabled={busy} onChange={setRoute} />
     </SettingRow>
   );
+  const typeOptions: Array<[number, string]> = [[0, 'Vac & Mop'], [1, 'Mop'], [2, 'Vacuum'], ...(supportsThenMop || vacuumThenMop ? [[3, 'Vac → Mop'] as [number, string]] : [])];
+  const typeHint = ['Vac & Mop for daily cleaning.', 'Mop only, for delicate floors.', 'Vacuum only.', 'Vacuums everything first, then mops.'][type];
 
   return (
     <Panel title="Cleaning mode">
@@ -570,12 +586,13 @@ function CleaningModePanel({ snap, rooms, busy, count, onCount, run, read }: {
         </>
       ) : (
         <>
-          <Segmented label="Cleaning type" block options={[[0, 'Vac & Mop'], [1, 'Mop'], [2, 'Vacuum']]} value={type} disabled={busy} onChange={chooseType} />
+          <Segmented label="Cleaning type" block options={typeOptions} value={type} disabled={busy} onChange={(i) => void chooseType(i)} />
+          <p className="muted small">{typeHint}</p>
           <div className="setting-list">
             {type !== 1 && suction}
             {type !== 2 && waterRow}
-            {type !== 2 && routeRow}
-            {passes}
+            {routeRow}
+            {type !== 3 && passes}
           </div>
         </>
       )}
@@ -640,7 +657,9 @@ function RoomModesDialog({ snap, rooms, busy, run, read, onClose }: { snap: Vacu
                   <td>
                     <Select label={`${room.name} water flow`} options={WATER_OPTIONS} value={normalizeWaterMode(m.waterBoxMode)} disabled={busy} onChange={(w) => {
                       const f = w === WaterBoxMode.OFF && m.fanPower === FanPower.OFF ? FanPower.BALANCED : m.fanPower;
-                      update({ ...m, fanPower: f, waterBoxMode: w });
+                      // The route is hidden without water, so a Deep one left there would be sent unseen.
+                      const r = w === WaterBoxMode.OFF && (m.mopMode === MopRoute.DEEP || m.mopMode === MopRoute.DEEP_PLUS) ? MopRoute.STANDARD : m.mopMode;
+                      update({ ...m, fanPower: f, waterBoxMode: w, mopMode: r });
                     }} />
                   </td>
                   <td>

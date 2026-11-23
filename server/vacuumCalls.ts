@@ -50,6 +50,11 @@ export const CALLS: Record<string, Call> = {
   setCleanMotorMode: action((repo, a) => repo.setCleanMotorMode(
     oneOf(a['fan'], 'suction', FAN_LEVELS), oneOf(a['water'], 'water flow', WATER_LEVELS), oneOf(a['mop'], 'route', ROUTES),
   )),
+  setCleanSequenceType: action((repo, a) => repo.setCleanSequenceType(
+    int(a['type'], 'cleaning sequence', 0, 1),
+    oneOf(a['fan'], 'suction', FAN_LEVELS), oneOf(a['water'], 'water flow', WATER_LEVELS), oneOf(a['mop'], 'route', ROUTES),
+    a['repeat'] === null || a['repeat'] === undefined ? null : int(a['repeat'], 'repeat', 1, 3),
+  )),
   fetchMopMode: read((repo) => repo.fetchMopMode()),
   fetchRoomCleanModes: read((repo) => repo.fetchRoomCleanModes()),
   saveRoomCleanModes: action((repo, a) => repo.saveRoomCleanModes(roomModes(a['modes']))),

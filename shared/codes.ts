@@ -8,6 +8,8 @@ export interface VacuumStatus {
   battery?: number;
   state?: number;
   fanPower?: number;
+  /** `seq_type` on the wire: 1 while vacuum-then-mop is set. */
+  cleanSequenceType?: number;
   cleanArea?: number;
   cleanTime?: number;
   errorCode?: number;
@@ -40,6 +42,7 @@ export const STATUS_FIELDS: Record<keyof VacuumStatus, string> = {
   battery: 'battery',
   state: 'state',
   fanPower: 'fan_power',
+  cleanSequenceType: 'seq_type',
   cleanArea: 'clean_area',
   cleanTime: 'clean_time',
   errorCode: 'error_code',
@@ -441,6 +444,13 @@ export function newFeatureBit(newFeatureSet: string | null | undefined, bit: num
 export const isSmartPlanSupported = (nfs: string | null | undefined) => newFeatureBit(nfs, 55);
 /** python-roborock NewFeatureStrBit.WATER_SLIDE_MODE */
 export const isWaterSlideSupported = (nfs: string | null | undefined) => newFeatureBit(nfs, 106);
+
+/** Vacuum-then-mop (python-roborock CLEAN_THEN_MOP_MODE), set with app_set_clean_sequence_type. */
+export const isVacuumThenMopSupported = (nfs: string | null | undefined) => newFeatureBit(nfs, 93);
+/** The stock app names bit 102 CtmWithRepeat and sends repeat only for sequence type 1. */
+export const isVacuumThenMopRepeatSupported = (nfs: string | null | undefined) => newFeatureBit(nfs, 102);
+/** Stock CleanEfficiency allows deep routes outside mop-only mode. */
+export const isCleanEfficiencySupported = (nfs: string | null | undefined) => newFeatureBit(nfs, 108);
 
 /** SmartPlan is on if any of the three values is its smart code. */
 export function isSmartModeSet(fan?: number, water?: number, mop?: number | null): boolean {

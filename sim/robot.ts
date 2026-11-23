@@ -233,10 +233,23 @@ export class SimRobot {
       case 'app_charge': this.returnAt = Date.now() + 6_000; this.setState(6); return respond(ok);
       case 'app_goto_target': this.setState(16); setTimeout(() => this.setState(3), 4_000); return respond(ok);
       case 'app_start_build_map': this.setState(29); return respond(ok);
-      case 'set_custom_mode': s['fan_power'] = Number(p0); return respond(ok);
+      // Like a Saros 20 Neo: Turbo is refused on its own and taken through set_clean_motor_mode.
+      case 'set_custom_mode':
+        if (Number(p0) === 103) return respond({ error: { code: -10005, message: 'Invalid type' } });
+        s['fan_power'] = Number(p0);
+        return respond(ok);
       case 'set_water_box_custom_mode': s['water_box_mode'] = Number(p0); return respond(ok);
       case 'set_mop_mode': this.mopMode = Number(p0); return respond(ok);
       case 'get_mop_mode': return respond({ result: [this.mopMode] });
+      case 'app_set_clean_sequence_type': {
+        const o = params as Record<string, number>;
+        if (Array.isArray(params) || (o['type'] !== 0 && o['type'] !== 1)) return respond({ error: { code: -10007, message: 'invalid params' } });
+        s['seq_type'] = o['type']!;
+        s['fan_power'] = o['fan_power']!;
+        s['water_box_mode'] = o['water_box_mode']!;
+        this.mopMode = o['mop_mode']!;
+        return respond(ok);
+      }
       case 'set_clean_motor_mode': {
         const m = (p0 ?? {}) as Record<string, number>;
         s['fan_power'] = m['fan_power']!;

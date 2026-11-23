@@ -84,6 +84,34 @@ export const setLedStatus = (s: VacuumSession, on: boolean) => s.sendCommand('se
 export const getMopMode = (s: VacuumSession) => s.sendCommand('get_mop_mode');
 export const setMopMode = (s: VacuumSession, mode: number) => s.sendCommand('set_mop_mode', [mode]);
 
+/** The suction, water and route codes one set_clean_motor_mode call carries. */
+export interface MotorModes { fan: number; water: number; mop: number }
+
+/**
+ * The robot's current three codes to resend with a single change, when a refusal of set_custom_mode,
+ * set_water_box_custom_mode or set_mop_mode is worth retrying as one set_clean_motor_mode call; null
+ * when it is not. A Saros 20 Neo (a296, 02.29.56) answers -10005 to set_custom_mode 102-105 and to
+ * some set_mop_mode values that the combined call accepts. Only -10005 is retried, and only with all
+ * three known. The codes stay raw, as the robot reported them. SmartPlan and per-room settings own
+ * all three, so they are left alone.
+ */
+export function motorModesForFallback(code: number | null, fan: number | undefined, water: number | undefined, mop: number | null | undefined): MotorModes | null {
+  if (code !== PARAM_FORMAT_REFUSED_CODE) return null;
+  if (fan === undefined || water === undefined || mop === null || mop === undefined) return null;
+  if (isSmartModeSet(fan, water, mop) || isCustomizeModeSet(fan, water, mop)) return null;
+  return { fan, water, mop };
+}
+
+/** {"type", "fan_power", "water_box_mode", "mop_mode"} and "repeat" for type 1 when given. */
+export function cleanSequenceTypeParams(type: number, fan: number, water: number, mop: number, repeat: number | null = null): JsonValue {
+  const out: Record<string, JsonValue> = { type, fan_power: fan, water_box_mode: water, mop_mode: mop };
+  if (type === 1 && repeat !== null) out['repeat'] = repeat;
+  return out;
+}
+
+/** Turns vacuum-then-mop on (type 1) or off (type 0), with the three codes to clean with. */
+export const setCleanSequenceType = (s: VacuumSession, type: number, fan: number, water: number, mop: number, repeat: number | null = null) =>
+  s.sendCommandRaw('app_set_clean_sequence_type', cleanSequenceTypeParams(type, fan, water, mop, repeat));
 
 /** Sets suction, water and route at once; the only way in or out of SmartPlan. */
 export function encodeCleanMotorModeParams(fanPower: number, waterBoxMode: number, mopMode: number): JsonValue {

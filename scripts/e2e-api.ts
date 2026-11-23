@@ -102,6 +102,8 @@ async function main() {
   await until('fan', () => snapshots.get(S8)?.status.fanPower === 104);
   check(snapshots.get(S8)!.status.fanPower === 104, 'status shows MAX suction');
   check((await call(S8, 'setFanPower', { level: 999 })).ok === false, 'invalid suction rejected');
+  const turbo = await call(S8, 'setFanPower', { level: 103 });
+  check(turbo.ok && (await until('turbo', () => snapshots.get(S8)?.status.fanPower === 103)) !== null, `refused suction change retried as one motor-mode call (${turbo.error ?? 'ok'})`);
   check((await call(S8, 'setMopMode', { mode: 303 })).ok && snapshots.get(S8) !== undefined, 'set route Deep+');
   check((await call(S8, 'fetchMopMode')).ok, 'read route');
   await until('mop', () => snapshots.get(S8)?.mopMode === 303);
