@@ -202,8 +202,8 @@ export class MqttLink extends EventEmitter {
         if (fresh && this.params) {
           log.info('MQTT credentials refreshed');
           this.params = { ...this.params, creds: fresh };
+          // The wait keeps growing: an unreachable broker must not cause a sign-in every few seconds.
           this.failedAttempts = 0;
-          this.backoffMs = INITIAL_BACKOFF_MS;
         }
       } catch (e) {
         log.warn(`MQTT credential refresh failed: ${(e as Error).message}`);
