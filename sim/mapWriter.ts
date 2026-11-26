@@ -20,10 +20,12 @@ export interface MapEdits {
   /** A Cruise record's points (block 37). */
   patrol?: { taskId: number; points: Array<{ x: number; y: number; photoIds: string[] }> };
   /** The map look's extra layers: carpet seen in one room (17), path points that are wash trips (18), removed areas (47), and floor-plan polygons made from the rooms (55). */
+  /** Furniture records (block 25), 23 bytes each. */
+  furniture?: number[][];
   look?: { carpetRoom?: number; washTrip?: [number, number]; eraser?: MapZone[]; floorPlan?: boolean };
 }
 
-const REPLACED = new Set([8, 9, 10, 12, 13, 14, 15, 16, 17, 18, 22, 24, 28, 32, 37, 39, 47, 55]);
+const REPLACED = new Set([8, 9, 10, 12, 13, 14, 15, 16, 17, 18, 22, 24, 25, 28, 32, 37, 39, 47, 55]);
 
 /** The image block's size and offset, and the path's point count, of a legacy map. */
 function imageInfo(base: Buffer): { width: number; height: number; left: number; top: number; pathPoints: number } {
@@ -190,6 +192,10 @@ export function writeLegacyMap(base: Buffer, edits: MapEdits): Buffer {
         out.push(block(47, 12, e, look.eraser.length));
       }
       if (look.floorPlan) out.push(floorPlanBlock(edits.pixels, info.width, info.height, info.left, info.top));
+    }
+    if (edits.furniture) {
+      // A 12-byte header with the record count as a u32 at byte 8, as an S7 MaxV sends it.
+      out.push(block(25, 12, Buffer.from(edits.furniture.flat()), edits.furniture.length));
     }
     if (edits.obstacles?.length) {
       const o = Buffer.alloc(edits.obstacles.length * 28);

@@ -1,6 +1,7 @@
 import type { RoomCleanMode, VacuumStatus } from './codes.js';
 import type { SmartWashSettings } from './dock.js';
 import type { AdvertisedFeature } from './features.js';
+import type { FurnitureSupport, MapFurnitureBlock } from './furniture.js';
 import type { MapObstacle, PatrolPoint } from './obstacles.js';
 import type { FirmwareCheck, FirmwareProgress } from './firmware.js';
 import type { VoiceInstallState } from './voice.js';
@@ -150,6 +151,8 @@ export interface VacuumSnapshot {
   /** Robot options that answered (see FEATURE_DEFS), in the table's order. */
   features: Array<{ id: string; value: number | null }>;
   featuresLoading: boolean;
+  /** Furniture editing as the robot's own app_get_init_status reports it (bit 36 of new_feature_info). */
+  furnitureSupport: FurnitureSupport;
   /** newFeatureSet bits the robot advertises that have no control here. */
   unlistedFeatures: AdvertisedFeature[];
   dnd: DndSettings | null;
@@ -190,6 +193,7 @@ export interface MapDto {
   carpetMask: string | null;
   zoneLines: FloorPlanZone[];
   eraserZones: MapZone[];
+  furnitureBlocks: MapFurnitureBlock[];
 }
 
 export type Reachability = 'CHECKING' | 'ONLINE' | 'OFFLINE';

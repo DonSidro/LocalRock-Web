@@ -14,6 +14,8 @@ import { MapView, type CustomGesture, type MapViewApi } from '../map/MapView';
 import { WALL_COLOR, ZONE_COLORS, drawWall, drawZone, zonePath } from '../map/render';
 import { navigate, setLeaveGuard, type Route } from '../router';
 import { useVacuum } from '../store';
+import { furnitureBlockedReason } from '../../../shared/furniture';
+import { FurnitureEditor } from './FurnitureEditor';
 import { ConfirmDialog, Empty, Field, IconButton, Panel, Select, Spinner, isTypingTarget } from '../ui';
 
 /*
@@ -98,6 +100,17 @@ export function MapEditorScreen({ duid }: { duid: string }) {
   const [notice, setNotice] = useState<Notice | null>(null);
   const [confirmSave, setConfirmSave] = useState(false);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const [furnitureOpen, setFurnitureOpen] = useState(false);
+  const [furnitureChecking, setFurnitureChecking] = useState(true);
+  const [furnitureCheck, setFurnitureCheck] = useState(0);
+
+  // Only the robot's own live answer may offer furniture editing; a failed read leaves it unknown.
+  useEffect(() => {
+    let alive = true;
+    setFurnitureChecking(true);
+    void call(duid, 'fetchFurnitureSupport').catch(() => undefined).finally(() => { if (alive) setFurnitureChecking(false); });
+    return () => { alive = false; };
+  }, [duid, furnitureCheck]);
 
   // Follow the robot's map until the user starts editing; then local edits own the state.
   useEffect(() => {
@@ -144,6 +157,16 @@ export function MapEditorScreen({ duid }: { duid: string }) {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
+
+  if (furnitureOpen) {
+    return (
+      <FurnitureEditor
+        duid={duid}
+        onClose={() => setFurnitureOpen(false)}
+        onSaved={() => { setFurnitureOpen(false); setNotice({ text: "Saved. The robot's map shows your furniture.", error: false }); }}
+      />
+    );
+  }
 
   if (!snap || !map) {
     return (
@@ -480,6 +503,25 @@ export function MapEditorScreen({ duid }: { duid: string }) {
                 ))}
               </div>
               {unsupportedMapEditNote(unsupported) && <p className="muted small">{unsupportedMapEditNote(unsupported)}</p>}
+              {snap.furnitureSupport === 'SUPPORTED' && (
+                <>
+                  <p className="muted small">Furniture editing needs a single saved map and is kept on the first map.</p>
+                  <div className="tool-grid">
+                    <button type="button" className="tool-btn" disabled={!editable || dirty || furnitureChecking} onClick={() => setFurnitureOpen(true)} aria-label="Edit furniture">
+                      <span className="disc" style={{ '--tint': 'var(--primary)' } as CSSProperties}><Icon name="chair" /></span>
+                      Furniture
+                    </button>
+                  </div>
+                  {dirty && <p className="muted small">Save or discard your map changes before editing furniture.</p>}
+                </>
+              )}
+              {furnitureChecking && snap.furnitureSupport !== 'SUPPORTED' && <p className="muted small">Checking furniture support...</p>}
+              {!furnitureChecking && snap.furnitureSupport === 'UNKNOWN' && (
+                <p className="muted small">
+                  {furnitureBlockedReason('UNKNOWN')}{' '}
+                  <button type="button" className="btn ghost sm" onClick={() => setFurnitureCheck((n) => n + 1)}>Retry furniture check</button>
+                </p>
+              )}
             </Panel>
 
             {selection && (

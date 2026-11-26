@@ -5,7 +5,7 @@ import { CAMERA_METHODS } from './vacuum/commands.js';
 import { UserError } from './vacuum/errors.js';
 import type { VacuumRepository } from './vacuum/repository.js';
 import {
-  bool, int, intList, num, obj, oneOf, point, roomModes, str, wallList, zoneList, type Args,
+  bool, furnitureList, int, intList, num, obj, oneOf, point, roomModes, str, wallList, zoneList, type Args,
 } from './validate.js';
 
 /*
@@ -182,6 +182,16 @@ export const CALLS: Record<string, Call> = {
 
   fetchRoutines: read((_repo, _a, app, duid) => app.routines(duid)),
   runRoutine: action((_repo, a, app) => app.runRoutine(int(a['id'], 'routine', 0, Number.MAX_SAFE_INTEGER), str(a['name'], 'routine', 200))),
+
+  fetchFurnitureSupport: read((repo) => repo.fetchFurnitureSupport()),
+  loadFurnitureEditor: read(async (repo) => {
+    const snap = await repo.loadFurnitureEditor();
+    return { map: toMapDto(snap.map, 0), support: snap.support };
+  }),
+  saveFurnitureEdits: read(async (repo, a) => {
+    const snap = await repo.saveFurnitureEdits(furnitureList(a['items']));
+    return { map: toMapDto(snap.map, 0), support: snap.support };
+  }),
 
   cameraRpc: read(async (repo, a) => {
     const method = str(a['method'], 'method', 64);

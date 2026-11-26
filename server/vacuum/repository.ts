@@ -5,6 +5,10 @@ import {
   isDockedAndIdle, isSmartPlanSupported, isWaterSlideSupported, mapNameBlocker, mapSavingEnabled, multiLevelEnabled, unsavedMapPresent, type RoomCleanMode, type VacuumStatus,
 } from '../../shared/codes.js';
 import { FloorMaterial, isRoundCarpet, type MapZone, type ParsedMap, type VirtualWall } from '../../shared/map.js';
+import {
+  FurnitureEditError, furnitureBlockedReason, furnitureEditParams, furnitureEditPlan, furnitureEditsConfirmed, furnitureMapBlocker,
+  furnitureSupportFromFlags, sameFurnitureBase, type FurniturePlacement, type FurnitureSnapshot, type FurnitureSupport,
+} from '../../shared/furniture.js';
 import { editBlockedReason, mapIndexBlocker, restrictionSaveBlocker, saveMapIndex, unsupportedMapEditMessage, type UnsupportedKind } from '../../shared/mapEdit.js';
 import { restrictionsMatch, sameZones } from '../../shared/verification.js';
 import type {
@@ -179,6 +183,10 @@ export class VacuumRepository extends EventEmitter {
 
   private readonly mapFetchMutex = new Mutex();
   private readonly editMutex = new Mutex();
+  private readonly featureReadMutex = new Mutex();
+  private furnitureSupport: FurnitureSupport = 'UNKNOWN';
+  /** The map the furniture editor loaded; a save is checked against it and spends it. */
+  private furnitureBaseline: FurnitureSnapshot | null = null;
   private readonly detector = new EventDetector();
   alertsWanted = false;
 
@@ -435,6 +443,7 @@ export class VacuumRepository extends EventEmitter {
       ...this.info,
       newFeatureSet: flags,
       featureSet: this.robotNewFeatureInfo ?? this.info.featureSet,
+      furnitureSupport: this.furnitureSupport,
       lastKnown: this.lastKnown,
       firmwareCheck: this.firmwareCheck,
       voice: this.voice,
@@ -1377,10 +1386,121 @@ export class VacuumRepository extends EventEmitter {
 
   async fetchRobotFeatureSet(): Promise<void> {
     if (this.robotNewFeatureSet !== null && this.robotNewFeatureInfo !== null) return;
-    const result = C.requireOk(await C.getInitStatus(this.deps.session), 'app_get_init_status').result;
-    this.robotNewFeatureSet = featureSetFromInitStatus(result);
-    this.robotNewFeatureInfo = newFeatureInfoFromInitStatus(result);
-    this.changed();
+    await this.fetchFurnitureSupport();
+  }
+
+  /**
+   * Read app_get_init_status again (FurnitureSupport.kt). Only a live answer can allow a furniture
+   * write: support is UNKNOWN while it is read and stays so when the read fails.
+   */
+  async fetchFurnitureSupport(): Promise<FurnitureSupport> {
+    return this.featureReadMutex.run(async () => {
+      this.furnitureSupport = 'UNKNOWN';
+      this.changed();
+      const result = C.requireOk(await C.getInitStatus(this.deps.session), 'app_get_init_status').result;
+      this.robotNewFeatureSet = featureSetFromInitStatus(result);
+      this.robotNewFeatureInfo = newFeatureInfoFromInitStatus(result);
+      this.furnitureSupport = furnitureSupportFromFlags(this.robotNewFeatureInfo);
+      this.changed();
+      return this.furnitureSupport;
+    });
+  }
+
+  // ---- Furniture (FurnitureEdits.kt) ---------------------------------------------------------
+
+  /** A furniture draft always starts from a fresh robot read, never from the map already shown. */
+  loadFurnitureEditor(): Promise<FurnitureSnapshot> {
+    return this.editMutex.run(async () => {
+      this.furnitureBaseline = null;
+      const snap = await this.readFreshFurniture();
+      this.furnitureBaseline = snap;
+      return snap;
+    });
+  }
+
+  /**
+   * Save a furniture draft against the map the editor loaded. A write is never retried, because an
+   * acknowledgement can be lost after the robot applied it; the editor must reload instead.
+   */
+  saveFurnitureEdits(draft: FurniturePlacement[]): Promise<FurnitureSnapshot> {
+    return this.editMutex.run(async () => {
+      const baseline = this.furnitureBaseline;
+      if (!baseline) throw new MapEditError('Reload the furniture editor before saving.');
+      // Whatever happens next, this baseline is spent: a second save needs a reload.
+      this.furnitureBaseline = null;
+      let plan: ReturnType<typeof furnitureEditPlan>;
+      try { plan = furnitureEditPlan(baseline.map, baseline.support, draft); } catch (e) {
+        throw e instanceof FurnitureEditError ? new MapEditError(e.message) : e;
+      }
+      const current = await this.readFreshFurniture();
+      if (!sameFurnitureBase(baseline.map, current.map)) {
+        throw new MapEditError("The robot's map changed while you were editing. Reload it to start from the latest furniture.");
+      }
+      if (plan.changed.length === 0 && plan.deleted.length === 0) {
+        this.furnitureBaseline = current;
+        return current;
+      }
+      const s = this.deps.session;
+      const ack = async (method: string, params: JsonValue = []) => {
+        const resp = await s.sendCommandRaw(method, params);
+        if (resp.error) throw new RobotCommandError(method, resp.error);
+        const r = resp.result;
+        if (!(Array.isArray(r) && r.length === 1 && r[0] === 'ok')) {
+          throw new MapEditError('The robot did not confirm the furniture edit. Reload the map before trying again.');
+        }
+      };
+      let writeFailure: unknown = null;
+      let mayHaveStarted = true;
+      try {
+        try { await ack('start_edit_map'); } catch (e) { if (e instanceof RobotCommandError) mayHaveStarted = false; throw e; }
+        await ack('save_furnitures', furnitureEditParams(plan) as unknown as JsonValue);
+      } catch (e) {
+        writeFailure = e;
+      }
+      let endFailed = false;
+      if (mayHaveStarted) {
+        try { await ack('end_edit_map'); } catch { endFailed = true; }
+      }
+      if (writeFailure) throw writeFailure;
+      if (endFailed) throw new MapEditError('Furniture may have been saved, but the edit session could not be closed. Reload the map before editing again.');
+      for (let attempt = 0; attempt < READBACK_ATTEMPTS; attempt++) {
+        if (attempt > 0) await sleep(READBACK_DELAY_MS);
+        let fresh: FurnitureSnapshot | null = null;
+        try { fresh = await this.readFreshFurniture(); } catch { /* next attempt */ }
+        if (fresh && furnitureEditsConfirmed(plan, fresh.map)) {
+          this.furnitureBaseline = fresh;
+          return fresh;
+        }
+      }
+      throw new MapEditError('The robot accepted the edit, but its map has not confirmed all changes. Reload before making another edit.');
+    });
+  }
+
+  /** Fresh support, status, map list and map, each checked; a failed or odd answer never falls back to a cached one. */
+  private async readFreshFurniture(): Promise<FurnitureSnapshot> {
+    const support = await this.fetchFurnitureSupport();
+    const blocked = furnitureBlockedReason(support);
+    if (blocked) throw new MapEditError(blocked);
+    const fresh = firstObject(C.requireOk(await this.deps.session.sendCommand('get_status'), 'get_status').result);
+    if (!fresh) throw new MapEditError("Couldn't read the robot's current status. Try refreshing.");
+    const state = intField(fresh, 'state');
+    const inCleaning = intField(fresh, 'in_cleaning');
+    const mapStatus = intField(fresh, 'map_status');
+    if (state === null || inCleaning !== 0 || ACTIVE_STATES.has(state)) {
+      throw new MapEditError('Let the robot finish its current task before editing furniture.');
+    }
+    if (mapStatus === null || mapStatus >> 2 !== 0) throw new MapEditError('Load the saved map before editing furniture.');
+    const list = firstObject(C.requireOk(await C.getMultiMapsList(this.deps.session), 'get_multi_maps_list').result);
+    const maps = list?.['map_info'];
+    const only = Array.isArray(maps) && maps.length === 1 && isObject(maps[0]) ? maps[0] as Record<string, unknown> : null;
+    const mapIndex = only ? intField(only, 'mapFlag') : null;
+    const indexProblem = mapIndexBlocker(mapIndex);
+    if (indexProblem) throw new MapEditError(indexProblem);
+    await this.fetchMap();
+    const map = this.editableMap();
+    const mapProblem = furnitureMapBlocker(map, mapIndex);
+    if (mapProblem) throw new MapEditError(mapProblem);
+    return { map, support };
   }
 
   /** Null when the robot did not reply at all, so a read that timed out is not mistaken for an answer. */

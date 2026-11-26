@@ -1,4 +1,5 @@
 import { parseObstacles, parsePatrolPoints, type MapObstacle, type PatrolPoint } from '../../shared/obstacles.js';
+import type { MapFurnitureBlock } from '../../shared/furniture.js';
 import { legacyGrid, type FloorPlanZone, type MapPoint, type MapRoom, type MapZone, type ParsedMap, type VirtualWall, type ZoneKind } from '../../shared/map.js';
 
 /*
@@ -26,6 +27,7 @@ const BLOCK_CARPET_MAP = 17; // one byte per image cell, bit 0 on carpet
 const BLOCK_MOP_PATH = 18; // one flag byte per path point
 const BLOCK_ERASER_ZONES = 47;
 const BLOCK_ZONE_LINES = 55;
+const BLOCK_FURNITURE = 25;
 const ZONE_HEADER_BYTES = 6;
 const ZONE_POINT_MIN_BYTES = 6;
 /** Rows either side of a room's label that its width is read over. */
@@ -68,6 +70,7 @@ export function parseLegacyMap(input: Uint8Array): ParsedMap {
   let carpetMask: Uint8Array | null = null;
   let zoneBlock: [number, number, number] | null = null;
   let eraserZones: MapZone[] = [];
+  const furnitureBlocks: MapFurnitureBlock[] = [];
 
   let off = headerLen;
   while (off + 8 <= bytes.length) {
@@ -77,7 +80,7 @@ export function parseLegacyMap(input: Uint8Array): ParsedMap {
     if (blockHeaderLen < 8 || blockHeaderLen > bytes.length - off) {
       throw new MapParseError(`Invalid block at off=${off}: header_len=${blockHeaderLen}`);
     }
-    if (blockDataLen < 0 || off + blockHeaderLen + blockDataLen > bytes.length) {
+    if (blockDataLen < 0 || blockDataLen > bytes.length - off - blockHeaderLen) {
       throw new MapParseError(`Block body out of range at off=${off}`);
     }
     const body = off + blockHeaderLen;
@@ -123,6 +126,12 @@ export function parseLegacyMap(input: Uint8Array): ParsedMap {
         break;
       case BLOCK_ZONE_LINES:
         zoneBlock = [off, blockHeaderLen, blockDataLen];
+        break;
+      case BLOCK_FURNITURE:
+        furnitureBlocks.push({
+          headerBytes: Array.from(bytes.subarray(off, body)),
+          bodyBytes: Array.from(bytes.subarray(body, body + blockDataLen)),
+        });
         break;
       case BLOCK_ERASER_ZONES:
         eraserZones = parseEraserZones(bytes, off, blockHeaderLen, blockDataLen);
@@ -237,6 +246,7 @@ export function parseLegacyMap(input: Uint8Array): ParsedMap {
     carpetMask: carpetMask && carpetMask.length === grid.length ? carpetMask : null,
     zoneLines,
     eraserZones,
+    furnitureBlocks,
   };
 }
 

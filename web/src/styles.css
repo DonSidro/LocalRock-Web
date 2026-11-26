@@ -802,6 +802,27 @@ kbd {
 .tool-btn:disabled { opacity: 0.4; cursor: default; }
 .tool-btn .disc { width: 30px; height: 30px; flex: none; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: color-mix(in srgb, var(--tint) 18%, transparent); color: var(--tint); }
 .tool-btn .disc svg.icon { width: 18px; height: 18px; }
+.furniture-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.furniture-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 4px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 8px;
+  background: var(--surface-low);
+  font-size: 12px;
+  line-height: 1.2;
+  text-align: center;
+  cursor: pointer;
+}
+.furniture-tile:hover:not(:disabled) { background: var(--surface-container); border-color: var(--border-strong); }
+.furniture-tile:disabled { opacity: 0.4; cursor: default; }
+/* The illustrations are drawn for a light tile in either theme. */
+.furniture-tile img, .furniture-thumb { background: #fff; border-radius: 6px; object-fit: contain; }
+.furniture-tile img { width: 100%; aspect-ratio: 1; padding: 4px; }
+.furniture-thumb { width: 32px; height: 32px; padding: 2px; flex: none; margin-right: 8px; }
 .notice-pill {
   position: absolute;
   left: 50%;

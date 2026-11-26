@@ -3,7 +3,7 @@ import { cellToMm, contentBoundsNorm, erasedRoomIds, mmToCell, type ParsedMap } 
 import { Icon } from '../icons';
 import { useDark } from '../theme';
 import {
-  DARK, HERO, HERO_DARK, LIGHT, drawFloorPlanStrokes, drawLayer, drawMarkers, drawRestrictions, drawRoute,
+  DARK, HERO, HERO_DARK, LIGHT, drawFloorPlanStrokes, drawFurniture, drawLayer, drawMarkers, drawRestrictions, drawRoute,
   renderFloor, renderSelection, renderWalls, roundRect, type MapPalette, type ToScreen,
 } from './render';
 import { roomIconPath } from './roomIcons';
@@ -60,6 +60,8 @@ interface Props {
   focusRoomId?: number | null;
   showLabels?: boolean;
   drawRestrictions?: boolean;
+  /** False where the caller draws furniture itself (the furniture editor). */
+  drawFurniture?: boolean;
   overlay?: (o: OverlayContext) => void;
   /** Change it to redraw the overlay. */
   overlayKey?: unknown;
@@ -235,6 +237,7 @@ export const MapView = forwardRef<MapViewApi, Props>(function MapView(props, ref
     drawFloorPlanStrokes(ctx, floor.shapes, (x, y) => v.toScreen(x, y));
     const p = latest.current;
     const ts = toScreen;
+    if (p.drawFurniture ?? true) drawFurniture(ctx, m, ts, v.k);
     if (p.drawRestrictions ?? true) drawRestrictions(ctx, m, ts);
     drawRoute(ctx, m, palette, ts, v.k, p.faintRoute ?? false);
     drawMarkers(ctx, m, palette, ts, v.k);

@@ -119,6 +119,7 @@ export function decodeMap(dto: MapDto): ParsedMap {
     carpetMask: dto.carpetMask ? b64(dto.carpetMask) : null,
     zoneLines: dto.zoneLines ?? [],
     eraserZones: dto.eraserZones ?? [],
+    furnitureBlocks: dto.furnitureBlocks ?? [],
   };
 }
 

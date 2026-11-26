@@ -516,5 +516,6 @@ export function toMapDto(map: ParsedMap, version: number): MapDto {
     carpetMask: map.carpetMask ? b64(map.carpetMask) : null,
     zoneLines: map.zoneLines,
     eraserZones: map.eraserZones,
+    furnitureBlocks: map.furnitureBlocks,
   };
 }

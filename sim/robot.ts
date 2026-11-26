@@ -50,6 +50,12 @@ export class SimRobot {
   private walls: VirtualWall[] = [];
   private carpets: MapZone[] = [];
   private thresholds: MapZone[] = [];
+  /** Furniture records (block 25): a sofa and a bed, plus a hidden record that must never be touched. */
+  private furniture: number[][] = [
+    furnitureBytes(1, 46, 3, [[24_000, 26_000], [26_000, 26_000], [26_000, 25_164], [24_000, 25_164]]),
+    furnitureBytes(2, 45, 1, [[27_000, 24_400], [28_200, 24_400], [28_200, 22_000], [27_000, 22_000]]),
+    furnitureBytes(3, 50, 0, [[23_000, 23_000], [23_400, 23_000], [23_400, 22_600], [23_000, 22_600]], 0),
+  ];
   private materials = new Map<number, number>();
   private directions = new Map<number, number>();
   private path: Array<{ x: number; y: number }> = [];
@@ -137,7 +143,7 @@ export class SimRobot {
     if (this.b01Map) return this.b01Map;
     return writeLegacyMap(this.baseMap!, {
       pixels: this.pixels!, noGo: this.noGo, noMop: this.noMop, walls: this.walls, carpets: this.carpets,
-      thresholds: this.thresholds, materials: this.materials, directions: this.directions, robot: this.robotPos,
+      thresholds: this.thresholds, materials: this.materials, directions: this.directions, robot: this.robotPos, furniture: this.furniture,
       obstacles: [{ x: 25_200, y: 24_800, type: 2, photoId: 'OBS0001' }, { x: 26_600, y: 26_000, type: 0, photoId: 'OBS0002' }],
       // The map look's layers; SIM_FLOOR_PLAN=1 also sends block 55, for the floor-plan look.
       look: {
@@ -265,7 +271,7 @@ export class SimRobot {
       case 'get_ota_state': return respond({ result: [{ ota_state: this.ota.state }] });
       case 'get_ota_progress': return respond({ result: [{ ota_progress: this.ota.progress }] });
       case 'app_get_init_status':
-        return respond({ result: [{ local_info: {}, feature_info: [111, 112], new_feature_info: 2 ** 25 + 2 ** 30 + 2 ** 3, new_feature_info_str: this.config.robotNewFeatureSet ?? this.config.newFeatureSet }] });
+        return respond({ result: [{ local_info: {}, feature_info: [111, 112], new_feature_info: 2 ** 36 + 2 ** 30 + 2 ** 25 + 2 ** 3, new_feature_info_str: this.config.robotNewFeatureSet ?? this.config.newFeatureSet }] });
       // FlexiArm side brush (bit 54): answers [{"status": n}] and takes the wrapped object.
       case 'get_right_brush_stretch_status': return respond({ result: [{ status: this.opts.brush }] });
       case 'set_right_brush_stretch_status': {
@@ -368,6 +374,24 @@ export class SimRobot {
       case 'set_switch_map_mode':
         if (method === 'set_switch_map_mode') s['switch_map_mode'] = Number((params as Record<string, unknown>)['mode']);
         return respond(ok);
+      case 'save_furnitures': {
+        const ops = (p0 as { data?: unknown })?.data;
+        if (!Array.isArray(ops)) return respond({ error: { code: -10000, message: 'invalid params' } });
+        for (const op of ops as number[][]) {
+          if (op[0] === 0) { this.furniture = this.furniture.filter((r) => r[21] !== op[1]); continue; }
+          const corners = [0, 1, 2, 3].map((i) => [op[2 + i * 2]!, op[3 + i * 2]!] as [number, number]);
+          const existing = this.furniture.find((r) => r[21] === op[1]);
+          if (existing) {
+            const next = furnitureBytes(op[1]!, existing[18]!, existing[19]!, corners, existing[20]!);
+            next[16] = existing[16]!; next[17] = existing[17]!; next[22] = existing[22]!;
+            this.furniture = this.furniture.map((r) => (r === existing ? next : r));
+          } else {
+            const id = Math.max(0, ...this.furniture.map((r) => r[21]!)) + 1;
+            this.furniture.push(furnitureBytes(id, op[10]!, op[11]!, corners));
+          }
+        }
+        return respond(ok);
+      }
       case 'app_rc_start': this.setState(4); return respond(ok);
       case 'app_rc_end': this.setState(3); return respond(ok);
       case 'app_start_collect_dust': this.returnAt = Date.now() + 8_000; this.setState(22); return respond(ok);
@@ -565,4 +589,12 @@ export class SimRobot {
 
 function zone(c: number[], kind: MapZone['kind']): MapZone {
   return { x0: c[0]!, y0: c[1]!, x1: c[2]!, y1: c[3]!, x2: c[4]!, y2: c[5]!, x3: c[6]!, y3: c[7]!, kind };
+}
+
+/** One 23-byte furniture record: corners (u16 x, y), two unknown bytes, type, subtype, display flag, id, one more byte. */
+function furnitureBytes(id: number, type: number, subtype: number, corners: Array<[number, number]>, display = 1): number[] {
+  const b = new Array<number>(23).fill(0);
+  corners.forEach(([x, y], i) => { b[i * 4] = x & 0xff; b[i * 4 + 1] = x >> 8; b[i * 4 + 2] = y & 0xff; b[i * 4 + 3] = y >> 8; });
+  b[16] = 7; b[18] = type; b[19] = subtype; b[20] = display; b[21] = id; b[22] = 1;
+  return b;
 }

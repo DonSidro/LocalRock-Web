@@ -1,3 +1,4 @@
+import type { MapFurnitureBlock } from './furniture.js';
 import type { MapObstacle, PatrolPoint } from './obstacles.js';
 /*
  * Parsed map model and the map's coordinate spaces, ported from LocalRock's B01Map.kt (ParsedMap),
@@ -99,6 +100,8 @@ export interface ParsedMap {
   zoneLines: FloorPlanZone[];
   /** Areas removed with the official Remove tool (legacy block 47), in robot mm; nothing is drawn inside them. */
   eraserZones: MapZone[];
+  /** Furniture (legacy block 25), every byte kept; see shared/furniture.ts. Shown, and edited apart from restrictions. */
+  furnitureBlocks: MapFurnitureBlock[];
 }
 
 /** Floor material ids seen on the S8 Pro Ultra and in captures of the official app. */

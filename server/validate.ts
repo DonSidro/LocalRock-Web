@@ -1,3 +1,4 @@
+import type { FurniturePlacement } from '../shared/furniture.js';
 import { MAX_MAP_COORD_MM, type MapZone, type VirtualWall, type ZoneKind } from '../shared/map.js';
 import type { RoomCleanMode } from '../shared/codes.js';
 import { UserError } from './vacuum/errors.js';
@@ -64,6 +65,22 @@ export function zoneList(v: unknown, kind: ZoneKind, maxItems: number): MapZone[
     };
     if (z['flags'] !== undefined && z['flags'] !== null) zone.flags = int(z['flags'], 'carpet flags', 0, 0xffffffff);
     return zone;
+  });
+}
+
+/** A furniture draft: up to 64 items, each a key (robot id 1-255, or a negative draft key), a type, a subtype and four corners. */
+export function furnitureList(v: unknown): FurniturePlacement[] {
+  if (!Array.isArray(v) || v.length > 64) throw new UserError('Invalid furniture list');
+  return v.map((raw) => {
+    const f = obj(raw, 'furniture');
+    const corners = f['corners'];
+    if (!Array.isArray(corners) || corners.length !== 4) throw new UserError('Invalid furniture corners');
+    return {
+      key: int(f['key'], 'furniture id', -1_000_000, 255),
+      type: int(f['type'], 'furniture type', 0, 255),
+      subtype: int(f['subtype'], 'furniture subtype', 0, 255),
+      corners: corners.map((c) => { const p = obj(c, 'corner'); return { x: mm(p['x'], 'furniture'), y: mm(p['y'], 'furniture') }; }),
+    };
   });
 }
 

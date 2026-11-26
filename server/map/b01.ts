@@ -200,6 +200,7 @@ export function parseB01Map(input: Uint8Array): ParsedMap {
     carpetMask: null,
     zoneLines: [],
     eraserZones: [],
+    furnitureBlocks: [],
     originalGrid: null,
   };
 }

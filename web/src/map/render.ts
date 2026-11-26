@@ -4,6 +4,7 @@ import {
   roomColorSlots, shaded, textureShade, vividOf, type FloorPattern, type FloorPlanShape,
 } from './look';
 import type { MapTransform } from './view';
+import { furnitureSymbol, furnitureSymbolOps, mapFurniture, quadPoint } from '../../../shared/furniture';
 
 /*
  * Map drawing, ported from LocalRock's MapRenderer.kt (app commit 24b1b6c, "draw it the way the
@@ -416,6 +417,83 @@ function drawRobotBody(ctx: CanvasRenderingContext2D, cx: number, cy: number, r:
   ctx.beginPath(); ctx.arc(lx, ly, unit * 4, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
   ctx.fillStyle = 'rgba(69,90,100,0.6)';
   ctx.beginPath(); ctx.arc(cx + unit * 10 * Math.cos(dir), cy + unit * 10 * Math.sin(dir), unit * 2, 0, Math.PI * 2); ctx.fill();
+}
+
+// ---- Furniture (MapFurnitureRenderer.kt) -------------------------------------------------------
+
+const FURNITURE_FILL = '#ECECEC';
+let furnitureScratch: [HTMLCanvasElement, CanvasRenderingContext2D] | null = null;
+
+/**
+ * One furniture item's plan-view artwork over its four screen corners. Details are cut out of the
+ * pale fill, so each item is drawn on its own scratch canvas: the cuts never reach the map below.
+ */
+export function drawFurnitureSymbol(ctx: CanvasRenderingContext2D, corners: Array<{ x: number; y: number }>, type: number, subtype: number, pxPerCell: number): void {
+  if (corners.length !== 4 || corners.some((c) => !Number.isFinite(c.x) || !Number.isFinite(c.y))) return;
+  const shortest = Math.min(...corners.map((c, i) => Math.hypot(corners[(i + 1) % 4]!.x - c.x, corners[(i + 1) % 4]!.y - c.y)));
+  if (shortest <= 0) return;
+  const detail = Math.max(0.6, Math.min(pxPerCell, shortest * 0.02));
+  const pad = Math.ceil(detail) + 1;
+  const xs = corners.map((c) => c.x), ys = corners.map((c) => c.y);
+  const left = Math.floor(Math.min(...xs)) - pad, top = Math.floor(Math.min(...ys)) - pad;
+  const w = Math.ceil(Math.max(...xs)) + pad - left, h = Math.ceil(Math.max(...ys)) + pad - top;
+  if (w <= 0 || h <= 0 || w > 4096 || h > 4096) return;
+  const dpr = ctx.getTransform().a || 1;
+  const pw = Math.ceil(w * dpr), ph = Math.ceil(h * dpr);
+  if (!furnitureScratch || furnitureScratch[0].width < pw || furnitureScratch[0].height < ph) {
+    furnitureScratch = canvasOf(Math.max(pw, furnitureScratch?.[0].width ?? 0), Math.max(ph, furnitureScratch?.[0].height ?? 0));
+  }
+  const [scratch, s] = furnitureScratch;
+  s.setTransform(1, 0, 0, 1, 0, 0);
+  s.clearRect(0, 0, pw, ph);
+  s.setTransform(dpr, 0, 0, dpr, -left * dpr, -top * dpr);
+  const local = corners;
+  const path = (pts: Array<[number, number]>, closed: boolean) => {
+    const p = new Path2D();
+    pts.forEach(([x, y], i) => {
+      const q = quadPoint(local, x, y);
+      if (i === 0) p.moveTo(q.x, q.y); else p.lineTo(q.x, q.y);
+    });
+    if (closed) p.closePath();
+    return p;
+  };
+  s.lineWidth = detail;
+  s.lineCap = 'round';
+  s.lineJoin = 'round';
+  for (const op of furnitureSymbolOps(furnitureSymbol(type, subtype))) {
+    if (op.op === 'line') {
+      s.globalCompositeOperation = 'destination-out';
+      s.stroke(path(op.pts, false));
+      continue;
+    }
+    const p = path(op.pts, true);
+    if (op.erase) {
+      s.globalCompositeOperation = 'destination-out';
+      s.fillStyle = '#000';
+      s.fill(p);
+      continue;
+    }
+    s.globalCompositeOperation = 'source-over';
+    s.fillStyle = FURNITURE_FILL;
+    s.fill(p);
+    if (op.outline) {
+      s.globalCompositeOperation = 'destination-out';
+      s.stroke(p);
+    }
+  }
+  s.globalCompositeOperation = 'source-over';
+  ctx.save();
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(scratch, 0, 0, pw, ph, left, top, w, h);
+  ctx.restore();
+}
+
+/** The map's visible furniture through the view. */
+export function drawFurniture(ctx: CanvasRenderingContext2D, map: ParsedMap, toScreen: ToScreen, pxPerCell: number): void {
+  for (const f of mapFurniture(map)) {
+    if (!f.isVisible) continue;
+    drawFurnitureSymbol(ctx, f.cornersMm.map((c) => toScreen(c.x, c.y)), f.type, f.subtype, pxPerCell);
+  }
 }
 
 function polygon(pts: Array<{ x: number; y: number }>): Path2D {

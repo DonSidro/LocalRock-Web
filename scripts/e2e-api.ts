@@ -222,6 +222,21 @@ async function main() {
   check(edit.ok, `no-go zone + carpet saved and confirmed on the map (${edit.error ?? 'ok'})`);
   const after = maps.get(S8)!;
   check(after.noGoZones.length === 1 && after.carpetAreas.length === 1 && after.carpetFlagsPresent, 'map shows zone and flagged carpet');
+
+  // Furniture (block 25): support from bit 36, a fresh load, and a save confirmed by readback.
+  const support = await call(S8, 'fetchFurnitureSupport');
+  check(support.ok && support.result === 'SUPPORTED' && snapshots.get(S8)?.furnitureSupport !== 'UNSUPPORTED', `furniture support read from new_feature_info bit 36 (${support.error ?? support.result})`);
+  check((maps.get(S8)?.furnitureBlocks?.length ?? 0) === 1, 'map carries the furniture block');
+  check(!(await call(S8, 'saveFurnitureEdits', { items: [] })).ok, 'furniture save without a fresh load refused');
+  const fl = await call(S8, 'loadFurnitureEditor');
+  check(fl.ok && fl.result?.support === 'SUPPORTED', `furniture editor loads a fresh map (${fl.error ?? 'ok'})`);
+  const sofaCorners = [{ x: 24500, y: 25836 }, { x: 26500, y: 25836 }, { x: 26500, y: 25000 }, { x: 24500, y: 25000 }];
+  const table = [{ x: 22000, y: 24000 }, { x: 23200, y: 24000 }, { x: 23200, y: 23100 }, { x: 22000, y: 23100 }];
+  const fs = await call(S8, 'saveFurnitureEdits', { items: [{ key: 1, type: 46, subtype: 3, corners: sofaCorners }, { key: -1, type: 48, subtype: 1, corners: table }] });
+  check(fs.ok, `furniture moved, added and deleted, confirmed by readback (${fs.error ?? 'ok'})`);
+  const forged = await call(S8, 'saveFurnitureEdits', { items: [{ key: 3, type: 50, subtype: 0, corners: table }] });
+  check(!forged.ok && /selection has changed/.test(forged.error ?? ''), 'a hidden furniture record cannot be edited');
+  check(!(await call(S8, 'saveFurnitureEdits', { items: [] })).ok, 'a refused furniture save spends the loaded map');
   const mat = await call(S8, 'setFloorMaterial', { segment: 18, material: 3, direction: 90 });
   check(mat.ok && mat.result?.confirmed === true, `floor material set and confirmed (${mat.error ?? 'ok'})`);
   const rename = await call(S8, 'renameRoom', { segment: 23, name: 'Guest room' });

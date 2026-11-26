@@ -193,6 +193,18 @@ async function main() {
   await page.getByRole('alertdialog').getByRole('button', { name: 'Save' }).click();
   await page.getByText(/Saved\. The robot's map shows the changes\./).waitFor({ timeout: 30_000 });
   await shot(page, '28-editor-saved');
+  // Furniture: shown on the map, edited on its own screen from a fresh read.
+  await page.getByRole('button', { name: 'Edit furniture' }).click();
+  await page.getByText('Add furniture').waitFor({ timeout: 30_000 });
+  await page.waitForTimeout(1200);
+  await shot(page, '28b-furniture');
+  await page.locator('.room-row', { hasText: 'Multi-seat sofa' }).click();
+  await shot(page, '28c-furniture-selected');
+  await page.getByRole('button', { name: 'Rotate left 15 degrees' }).click();
+  await page.getByRole('button', { name: 'Back to the map editor' }).click();
+  await page.getByText('Discard furniture changes?').waitFor();
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Discard' }).click();
+  await page.getByText('Add to map').waitFor();
   await page.getByRole('group', { name: 'Edit mode' }).getByRole('button', { name: 'Rooms' }).click();
   await page.locator('.room-row', { hasText: 'Kitchen' }).click();
   await page.waitForTimeout(800);
