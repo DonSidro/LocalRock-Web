@@ -1,7 +1,9 @@
 # syntax=docker/dockerfile:1
 
 # ---- Build: compile the server and bundle the page ----
-FROM node:20-alpine AS build
+# The output is plain JavaScript, so it is built once on the build machine's own platform
+# and copied into every architecture's image (no slow emulated npm build).
+FROM --platform=$BUILDPLATFORM node:20-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
@@ -10,6 +12,7 @@ RUN npm run build
 
 # ---- Run: only production dependencies and the built output ----
 FROM node:20-alpine
+LABEL org.opencontainers.image.source="https://github.com/DonSidro/LocalRock-Web"       org.opencontainers.image.description="LocalRock Web: control Roborock vacuums through a local_roborock_server"       org.opencontainers.image.licenses="MIT"
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=8080 \

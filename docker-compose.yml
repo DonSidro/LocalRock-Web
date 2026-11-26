@@ -1,7 +1,9 @@
 services:
   localrock-web:
-    build: .
-    image: localrock-web:latest
+    # The published image (amd64, arm64, arm/v7). To build from this checkout instead, swap the two
+    # lines below and run: docker compose up -d --build
+    image: ghcr.io/donsidro/localrock-web:latest
+    # build: .
     container_name: localrock-web
     restart: unless-stopped
     ports:

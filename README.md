@@ -157,12 +157,23 @@ server's HTTPS and MQTT.
 ## Run with Docker Compose
 
 Run it on a computer on the same network as your local_roborock_server (a home server, NAS or
-Raspberry Pi works).
+Raspberry Pi works). A ready-made image is published for amd64, arm64 and arm/v7, so nothing needs
+building. Either run it directly:
+
+```bash
+docker run -d --name localrock-web --restart unless-stopped   -p 8080:8080   -e LOCALROCK_PASSWORD=choose-a-long-password   -v localrock-data:/app/data   ghcr.io/donsidro/localrock-web:latest
+```
+
+or with Compose, using just `docker-compose.yml` and a `.env` file from this repository:
 
 ```bash
 cp .env.example .env      # then edit .env and choose a long LOCALROCK_PASSWORD
-docker compose up -d --build
+docker compose up -d
 ```
+
+Images are tagged `latest` (the newest master), a version such as `1.5.0` for each release, and
+the commit. To build from a checkout instead, swap `image:` for `build: .` in the compose file and
+run `docker compose up -d --build`.
 
 Open `http://<that computer's address>:8080` and enter the password. In a container the page
 listens on all interfaces, so the password is required; compose refuses to start without it.
@@ -172,7 +183,8 @@ listens on all interfaces, so the password is required; compose refuses to start
 - Set `LOCALROCK_PORT` in `.env` to publish another port.
 - To trust your own CA, put `ca.pem` next to `docker-compose.yml` and uncomment the two
   `LOCALROCK_CA_FILE` lines in it.
-- Update with `git pull` followed by `docker compose up -d --build`.
+- Update with `docker compose pull && docker compose up -d` (with `docker run`: pull the image,
+  then remove and start the container again; the volume keeps your settings).
 - **Add vacuum** sends its Wi-Fi packets from the container. It needs the Docker host itself to
   join the robot's `roborock-vacuum-...` Wi-Fi, so it is easiest on a machine with Wi-Fi; a
   headless server can do the rest and you can pair from a `npm start` copy on a laptop.
