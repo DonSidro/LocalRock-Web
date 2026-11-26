@@ -164,14 +164,27 @@ async function main() {
   await page.keyboard.press('Escape');
   await page.getByRole('link', { name: 'Remote' }).click();
   await shot(page, '21-remote');
-  await page.getByRole('link', { name: 'Camera' }).click();
-  await page.getByText('Type a PIN instead').waitFor();
-  await shot(page, '22-camera');
-  await page.getByText('Type a PIN instead').click();
-  await page.locator('input[type=password]').fill('1234');
-  await page.getByText('Start live view').click();
-  await page.getByText(/-1007/).waitFor({ timeout: 15_000 });
-  await shot(page, '23-camera-error');
+  // Video is off until Experimental video is on, and shows only for models with remote viewing
+  // (run the simulator with SIM_S8_MODEL=roborock.vacuum.a27 to see the entry screen).
+  await openVac(page, 'camera');
+  await page.getByText(/Experimental video/).first().waitFor();
+  await shot(page, '22-camera-off');
+  await page.evaluate(() => localStorage.setItem('lrw-video', '1'));
+  await page.reload();
+  await page.getByRole('link', { name: 'Overview' }).waitFor();
+  await page.waitForTimeout(500);
+  if (await page.getByRole('link', { name: 'Camera' }).count()) {
+    await page.getByText('Use a numeric PIN').waitFor();
+    await shot(page, '22-camera');
+    await page.getByText('Use a numeric PIN').click();
+    await page.locator('input[type=password]').fill('1234');
+    await page.getByRole('button', { name: 'Open video' }).click();
+    await page.getByText(/PIN feature is disabled/).waitFor({ timeout: 15_000 });
+    await shot(page, '23-camera-error');
+  } else {
+    await page.getByText(/no remote viewing/).waitFor();
+    await shot(page, '22-camera-unsupported');
+  }
 
   // Map editor
   await page.getByRole('link', { name: 'Edit map' }).first().click();

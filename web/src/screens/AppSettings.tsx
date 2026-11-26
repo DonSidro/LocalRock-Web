@@ -3,6 +3,7 @@ import { get, post } from '../api';
 import { attempt, toast, useStore } from '../store';
 import { setThemeMode, useThemeMode, type ThemeMode } from '../theme';
 import { ConfirmDialog, PageHeader, Panel, Segmented, SettingRow, Switch } from '../ui';
+import { setVideoEnabled, useVideoEnabled } from '../camera/prefs';
 import { ServerScreen } from './Setup';
 
 /* App-wide settings: server, appearance, robot alerts, this page, about. */
@@ -10,6 +11,7 @@ import { ServerScreen } from './Setup';
 export function AppSettingsScreen() {
   const app = useStore((s) => s.app)!;
   const theme = useThemeMode();
+  const video = useVideoEnabled();
   const [editServer, setEditServer] = useState(false);
   const [confirmLogout, setConfirmLogout] = useState(false);
   const [pagePassword, setPagePassword] = useState(false);
@@ -58,6 +60,15 @@ export function AppSettingsScreen() {
               value={theme}
               onChange={setThemeMode}
             />
+          </SettingRow>
+        </Panel>
+
+        <Panel title="Video">
+          <SettingRow
+            title="Experimental video"
+            sub="Show the Camera tab on robots with official remote viewing. Needs a server with camera support and a reachable TURN endpoint. Kept in this browser."
+          >
+            <Switch label="Experimental video" checked={video} onChange={setVideoEnabled} />
           </SettingRow>
         </Panel>
 

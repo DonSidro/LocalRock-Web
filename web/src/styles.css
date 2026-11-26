@@ -865,6 +865,60 @@ kbd {
 .camera-stage .field-label { color: rgba(255, 255, 255, 0.7); }
 .live-tag { position: absolute; top: 12px; right: 16px; padding: 2px 8px; border-radius: 6px; background: rgba(229, 57, 53, 0.85); font-size: 12px; font-weight: 600; }
 .pattern { width: 240px; height: 240px; touch-action: none; }
+.camera-entry { align-items: center; padding: 32px; max-width: 460px; text-align: center; }
+.camera-entry .callout { text-align: left; color: var(--on-surface); }
+.camera-stage.viewer { flex-direction: column; justify-content: center; padding-bottom: 64px; }
+.camera-stage.viewer.fullscreen { border-radius: 0; height: 100vh; padding-bottom: 0; }
+.camera-stage.viewer.fullscreen video { max-height: 100vh; height: 100%; }
+/* Fill covers the stage and trims the edges; Fit shows the whole frame with black margins. */
+.camera-stage video.fill { object-fit: cover; }
+.camera-stage video.fit { object-fit: contain; }
+.camera-center { align-items: center; padding: 24px; }
+.camera-top { position: absolute; top: 12px; left: 16px; display: flex; gap: 8px; align-items: center; z-index: 2; }
+.camera-top .live-tag { position: static; }
+.camera-top .chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 6px; background: rgba(0, 0, 0, 0.55); font-size: 12px; }
+.camera-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 3;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.75));
+}
+.camera-bar .btn.secondary { background: rgba(255, 255, 255, 0.14); color: #fff; border-color: transparent; }
+.camera-bar .btn.secondary[aria-pressed='true'] { background: rgba(255, 255, 255, 0.32); }
+.camera-notes { position: absolute; left: 12px; right: 12px; bottom: 64px; z-index: 3; display: flex; flex-direction: column; gap: 6px; }
+.camera-map {
+  position: absolute;
+  top: 48px;
+  right: 12px;
+  z-index: 3;
+  width: min(420px, 60%);
+  height: min(340px, 55%);
+  display: flex;
+  flex-direction: column;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface-low);
+  box-shadow: var(--shadow);
+}
+.camera-map > :first-child { flex: 1; min-height: 0; }
+.camera-map-actions { padding: 8px; }
+.camera-drive { position: absolute; left: 16px; bottom: 76px; z-index: 3; }
+.drive-pad { display: grid; grid-template-columns: repeat(3, 56px); grid-template-rows: repeat(3, 56px); gap: 4px; }
+.drive-btn { display: flex; align-items: center; justify-content: center; border: none; border-radius: 12px; background: rgba(255, 255, 255, 0.2); color: #fff; touch-action: none; user-select: none; cursor: pointer; }
+.drive-btn:active:not(:disabled) { background: rgba(255, 255, 255, 0.45); }
+.drive-btn:disabled { opacity: 0.35; cursor: default; }
+.drive-btn svg.icon { width: 30px; height: 30px; }
+.drive-btn.forward { grid-area: 1 / 2; }
+.drive-btn.left { grid-area: 2 / 1; }
+.drive-btn.right { grid-area: 2 / 3; }
+.drive-btn.backward { grid-area: 3 / 2; }
 
 /* ---- Narrow windows ---- */
 

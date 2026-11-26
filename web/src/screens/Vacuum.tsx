@@ -21,6 +21,7 @@ import { useRobotActions } from '../useRobot';
 import { isPetSearchSupported } from '../../../shared/matter';
 import { modelSubtitle } from '../../../shared/products';
 import { CameraScreen } from './Camera';
+import { useCameraAvailable } from '../camera/prefs';
 import { MapEditorScreen } from './MapEditor';
 import { RemoteScreen } from './Remote';
 import { ScheduleTab } from './Schedule';
@@ -58,6 +59,7 @@ type Read = ReturnType<typeof useRobotActions>['read'];
 export function VacuumWorkspace({ duid, tab, tool }: { duid: string; tab: VacTab; tool: MapTool }) {
   const { snap, map } = useVacuum(duid);
   const devices = useStore((s) => s.devices);
+  const cameraAvailable = useCameraAvailable(snap?.model);
   const actions = useRobotActions(duid);
   const { run, busy } = actions;
   // Kept here so a room pick survives a look at another tab.
@@ -139,7 +141,7 @@ export function VacuumWorkspace({ duid, tab, tool }: { duid: string; tab: VacTab
       </PageHeader>
 
       <nav className="tabbar" aria-label={`${snap.name} sections`}>
-        {TABS.map(([t, label, icon]) => (
+        {TABS.filter(([t]) => t !== 'camera' || cameraAvailable || tab === 'camera').map(([t, label, icon]) => (
           <Link key={t} to={vacRoute(duid, t)} className="tab" current={t === tab}><Icon name={icon} />{label}</Link>
         ))}
       </nav>

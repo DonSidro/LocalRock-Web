@@ -28,7 +28,6 @@ export interface StoredSettings {
   adminPassword: string | null;
   notify: NotifySettings;
   cleanOrders: Record<string, number[]>;
-  cameraPins: Record<string, string>;
 }
 
 function defaults(): StoredSettings {
@@ -42,7 +41,6 @@ function defaults(): StoredSettings {
     adminPassword: null,
     notify: { enabled: false, errors: true, finished: true, dock: true },
     cleanOrders: {},
-    cameraPins: {},
   };
 }
 
@@ -61,13 +59,13 @@ export class Store {
     const base = defaults();
     if (!existsSync(this.file)) return base;
     try {
-      const parsed = JSON.parse(readFileSync(this.file, 'utf8')) as Partial<StoredSettings>;
+      // Camera PINs were kept here before 1.5.0; like the app, the live view now keeps them in memory only, so old ones are dropped.
+      const { cameraPins: _dropped, ...parsed } = JSON.parse(readFileSync(this.file, 'utf8')) as Partial<StoredSettings> & { cameraPins?: unknown };
       return {
         ...base,
         ...parsed,
         notify: { ...base.notify, ...(parsed.notify ?? {}) },
         cleanOrders: parsed.cleanOrders ?? {},
-        cameraPins: parsed.cameraPins ?? {},
       };
     } catch (e) {
       log.error(`Could not read ${this.file}, starting with empty settings: ${(e as Error).message}`);

@@ -1,7 +1,9 @@
 import { FanPower, MopRoute, WaterBoxMode } from '../shared/codes.js';
 import { FloorMaterial, MAX_MAP_COORD_MM } from '../shared/map.js';
 import { toMapDto, type App } from './app.js';
+import { CAMERA_CONTROL_METHODS, cameraAllowsRobotControls, cameraControlTimeoutMs, cameraModelSupport, cameraShowsEntry } from '../shared/camera.js';
 import { CAMERA_METHODS } from './vacuum/commands.js';
+import type { JsonValue } from './protocol/json.js';
 import { UserError } from './vacuum/errors.js';
 import type { VacuumRepository } from './vacuum/repository.js';
 import {
@@ -194,21 +196,39 @@ export const CALLS: Record<string, Call> = {
   }),
 
   cameraRpc: read(async (repo, a) => {
+    if (!cameraShowsEntry(cameraModelSupport(repo.info.model))) throw new UserError('This robot has no supported camera');
     const method = str(a['method'], 'method', 64);
     if (!CAMERA_METHODS.has(method)) throw new UserError('Not a camera command');
     const params = a['params'] ?? [];
     const okShape = Array.isArray(params) ? params.length === 0 : typeof params === 'object' && params !== null;
     if (!okShape) throw new UserError('Invalid camera parameters');
     for (const v of Object.values(params as object)) {
-      if (typeof v !== 'string' || v.length > 65_536) throw new UserError('Invalid camera parameters');
+      const fine = typeof v === 'string' ? v.length <= 65_536 : typeof v === 'boolean' || (typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 100);
+      if (!fine) throw new UserError('Invalid camera parameters');
     }
     const resp = await repo.session.sendCommandRaw(method, params as Record<string, string>);
     return { result: resp.result, error: resp.error };
   }),
-  getCameraPin: read(async (_repo, _a, app, duid) => app.store.get().cameraPins[duid] ?? null),
-  setCameraPin: read(async (_repo, a, app, duid) => {
-    const pin = a['pin'] === null || a['pin'] === undefined || a['pin'] === '' ? null : str(a['pin'], 'PIN', 32);
-    app.store.update((s) => { if (pin === null) delete s.cameraPins[duid]; else s.cameraPins[duid] = pin; });
+  /** The live view's driving, Go, dock and cleaning controls (CameraMotionController.kt): the tested model only. */
+  cameraControl: read(async (repo, a) => {
+    if (!cameraAllowsRobotControls(cameraModelSupport(repo.info.model))) throw new UserError('Video controls are only available on the tested camera model');
+    const method = str(a['method'], 'method', 64);
+    if (!CAMERA_CONTROL_METHODS.has(method)) throw new UserError('Not a video control command');
+    let params: JsonValue = [];
+    if (method === 'app_rc_move') {
+      const m = obj(Array.isArray(a['params']) ? a['params'][0] : null, 'movement');
+      params = [{
+        velocity: num(m['velocity'], 'velocity', -0.3, 0.3), omega: num(m['omega'], 'turn', -1.1, 1.1),
+        duration: int(m['duration'], 'duration', 0, 3_000), seqnum: int(m['seqnum'], 'sequence', 0, 1_000_000),
+      }];
+    } else if (method === 'app_goto_target') {
+      const p = Array.isArray(a['params']) ? a['params'] : [];
+      params = [int(p[0], 'x', 0, MAX_MAP_COORD_MM), int(p[1], 'y', 0, MAX_MAP_COORD_MM)];
+    } else if (a['params'] !== undefined && !(Array.isArray(a['params']) && a['params'].length === 0)) {
+      throw new UserError('Invalid video control parameters');
+    }
+    const resp = await repo.session.sendCommandRaw(method, params, { timeoutMs: cameraControlTimeoutMs(method) });
+    return { result: resp.result, error: resp.error };
   }),
 };
 

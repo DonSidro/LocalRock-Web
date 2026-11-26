@@ -46,7 +46,8 @@ function bitsOf(hex: string): number[] {
 const robots = [
   new SimRobot({
     duid: 'SimS8ProUltra01', name: 'S8 Pro Ultra (simulated)', localKey: 'abcdefghijklmnop', productId: 'p-s8',
-    model: 'roborock.vacuum.a70', newFeatureSet: '00000048009EFFFE', robotNewFeatureSet: featureSet([...bitsOf('00000048009EFFFE'), 36, 54, 70, 74, 118]), featureSet: String(2 ** 25 + 2 ** 3), fv: '02.33.88', format: 'legacy',
+    // SIM_S8_MODEL=roborock.vacuum.a27 makes it pose as an S7 MaxV, so the camera page shows (for screenshots).
+    model: process.env['SIM_S8_MODEL'] ?? 'roborock.vacuum.a70', newFeatureSet: '00000048009EFFFE', robotNewFeatureSet: featureSet([...bitsOf('00000048009EFFFE'), 36, 54, 70, 74, 118]), featureSet: String(2 ** 25 + 2 ** 3), fv: '02.33.88', format: 'legacy',
   } satisfies RobotConfig),
   new SimRobot({
     duid: 'SimQrevoCurv02', name: 'Qrevo Curv (simulated)', localKey: 'qrstuvwxyz012345', productId: 'p-curv',

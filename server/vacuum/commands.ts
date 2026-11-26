@@ -579,8 +579,6 @@ export const setCustomizeCleanMode = (s: VacuumSession, modes: RoomCleanMode[]) 
 /** The camera RPCs the browser may send; each takes a bare object or no params, as captured. */
 export const CAMERA_METHODS: ReadonlySet<string> = new Set([
   'check_homesec_password',
-  'set_homesec_password',
-  'reset_homesec_password',
   'get_homesec_connect_status',
   'start_camera_preview',
   'stop_camera_preview',
@@ -590,4 +588,9 @@ export const CAMERA_METHODS: ReadonlySet<string> = new Set([
   'get_device_sdp',
   'send_ice_to_robot',
   'get_device_ice',
+  // Two-way audio and the stream quality, as the app sends them.
+  'start_voice_chat',
+  'stop_voice_chat',
+  'set_voice_chat_volume',
+  'switch_video_quality',
 ]);

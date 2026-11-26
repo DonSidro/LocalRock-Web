@@ -295,9 +295,11 @@ async function main() {
   check((await call(S8, 'rcStart')).ok && (await call(S8, 'rcMove', { velocity: 0.3, omega: 0, durationMs: 1500 })).ok && (await call(S8, 'rcEnd')).ok, 'remote control');
 
   // Camera path
+  // The S8 Pro Ultra (a70) has no remote viewing, so the camera route refuses it, as the app hides it.
   const cam = await call(S8, 'cameraRpc', { method: 'check_homesec_password', params: { password: '81dc9bdb52d04dc20036dbd8313ed055' } });
-  check(cam.ok && cam.result.error?.code === -1007, 'camera RPC reaches the robot (-1007 from the simulator)');
-  check((await call(S8, 'cameraRpc', { method: 'app_start', params: {} })).ok === false, 'non-camera method refused on the camera route');
+  check(!cam.ok && /no supported camera/.test(cam.error ?? ''), `camera refused for a model without remote viewing (${cam.error ?? 'ok'})`);
+  const ctl = await call(S8, 'cameraControl', { method: 'app_rc_start', params: [] });
+  check(!ctl.ok && /tested camera model/.test(ctl.error ?? ''), 'video controls refused on an untested model');
 
   // B01 robot
   ws.send(JSON.stringify({ t: 'watch', duid: CURV }));
