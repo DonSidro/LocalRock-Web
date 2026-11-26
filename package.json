@@ -1,6 +1,6 @@
 {
   "name": "localrock-web",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "Local web interface for Roborock vacuums on a self-hosted local_roborock_server",
   "license": "MIT",
