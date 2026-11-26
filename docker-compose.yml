@@ -13,6 +13,10 @@ services:
       # Set it in a .env file next to this file: LOCALROCK_PASSWORD=choose-a-long-password
       LOCALROCK_PASSWORD: ${LOCALROCK_PASSWORD:?Set LOCALROCK_PASSWORD in .env}
       LOCALROCK_DEBUG: ${LOCALROCK_DEBUG:-}
+      # The user the server runs as, and who owns the data folder (default 1000). Set these when you
+      # mount a host folder that should keep its owner, e.g. PUID=1026 and PGID=100 on a Synology.
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
       # To trust your own CA for the server's HTTPS and MQTT, uncomment the volume below and this line:
       # LOCALROCK_CA_FILE: /certs/ca.pem
     volumes:

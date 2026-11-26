@@ -52,7 +52,16 @@ export class Store {
     this.file = join(dir, 'settings.json');
     mkdirSync(dir, { recursive: true });
     this.data = this.load();
-    this.save();
+    try {
+      this.save();
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code === 'EACCES' || code === 'EPERM' || code === 'EROFS') {
+        const uid = typeof process.getuid === 'function' ? ` (running as user ${process.getuid()})` : '';
+        throw new Error(`Can't write to the data folder ${dir}${uid}. Make it writable for this user; in Docker, set PUID and PGID to the folder's owner.`);
+      }
+      throw e;
+    }
   }
 
   private load(): StoredSettings {

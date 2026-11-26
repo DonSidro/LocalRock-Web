@@ -186,7 +186,9 @@ Open `http://<that computer's address>:8080` and enter the password. In a contai
 listens on all interfaces, so the password is required; compose refuses to start without it.
 
 - Settings and the server session are kept in the `localrock-data` volume, so they survive
-  rebuilds and updates.
+  rebuilds and updates. A host folder works too (`-v /some/folder:/app/data`): the container makes
+  it belong to user 1000 on start. To keep a different owner, set `PUID` and `PGID` to that user's
+  and group's ids (for example `-e PUID=1026 -e PGID=100` on a Synology).
 - Set `LOCALROCK_PORT` in `.env` to publish another port.
 - To trust your own CA, put `ca.pem` next to `docker-compose.yml` and uncomment the two
   `LOCALROCK_CA_FILE` lines in it (with `docker run`: add `-v ./ca.pem:/certs/ca.pem:ro` and

@@ -21,11 +21,13 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=build /app/dist ./dist
-# The data folder holds the server session and login code; owned by the unprivileged user.
-RUN mkdir -p /app/data && chown node:node /app/data
-USER node
+# The data folder holds the server session and login code. The entrypoint makes sure it belongs to
+# the user the server runs as (PUID/PGID, default node = 1000), then drops root.
+RUN apk add --no-cache su-exec && mkdir -p /app/data && chown node:node /app/data
+COPY --chmod=755 docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 VOLUME ["/app/data"]
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||8080)+'/api/auth').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["node", "dist/server/server/index.js"]
