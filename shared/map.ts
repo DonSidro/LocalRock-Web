@@ -393,8 +393,64 @@ export function contentBoundsNorm(map: ParsedMap, floorPlan = true): ContentBoun
   };
   const gone = erasedRoomIds(map);
   const zones = floorPlan ? map.zoneLines.filter((z) => !gone.has(z.segment)) : [];
-  if (zones.length === 0) return cells ?? { left: 0, top: 0, right: 1, bottom: 1 };
+  if (zones.length === 0 || !floorPlanFitsGrid(map.zoneLines, map.grid, map.width, map.height)) return cells ?? { left: 0, top: 0, right: 1, bottom: 1 };
   return floorPlanBoundsNorm(cells, zones, map.width, map.height, FLOOR_PLAN_OUTER_WIDTH_CELLS);
+}
+
+/** A room outline may cover at most this share of cells that are not scanned floor or wall. */
+export const FLOOR_PLAN_MAX_SPILL = 0.3;
+/** Outlines smaller than this many cells are not judged: a few edge cells would swing the share. */
+export const FLOOR_PLAN_MIN_JUDGED_CELLS = 64;
+
+const fitCache = new WeakMap<FloorPlanZone[], boolean>();
+
+/**
+ * Whether the robot's room outlines fit its scanned floor, ported from the app's floorPlanFitsGrid.
+ * Some robots (a Qrevo Curv 2 Flow) send an outline that is a plain box around the room, and painting
+ * from it floods the room colour far past its walls. When any sizeable outline spills more than
+ * maxSpill of its area onto cells that are not floor (128) or wall (127), the map is drawn from its
+ * cells instead. Zone points are image-frame cell corners; drawn y is height - y, and cell (x, y) of
+ * the grid (row 0 at the bottom) is drawn at x..x+1, h-1-y..h-y.
+ */
+export function floorPlanFitsGrid(zones: FloorPlanZone[], grid: Uint8Array, width: number, height: number, maxSpill = FLOOR_PLAN_MAX_SPILL): boolean {
+  const cached = maxSpill === FLOOR_PLAN_MAX_SPILL ? fitCache.get(zones) : undefined;
+  if (cached !== undefined) return cached;
+  let fits = true;
+  for (const zone of zones) {
+    if (zone.points.length < 3) continue;
+    const pts = zone.points.map((p) => ({ x: p.x, y: height - p.y }));
+    let inside = 0;
+    let spill = 0;
+    const minY = Math.min(...pts.map((p) => p.y));
+    const maxY = Math.max(...pts.map((p) => p.y));
+    const clampRow = (v: number) => Math.min(height - 1, Math.max(0, Math.trunc(v)));
+    // Drawn row centre yc = h - y - 0.5, so the rows the outline can reach are these.
+    const yFrom = clampRow(height - maxY - 0.5);
+    const yTo = clampRow(height - minY - 0.5);
+    for (let y = yFrom; y <= yTo; y++) {
+      const yc = height - y - 0.5;
+      const crossings: number[] = [];
+      for (let i = 0; i < pts.length; i++) {
+        const a = pts[i]!;
+        const b = pts[(i + 1) % pts.length]!;
+        if ((a.y > yc) !== (b.y > yc)) crossings.push(a.x + ((yc - a.y) * (b.x - a.x)) / (b.y - a.y));
+      }
+      crossings.sort((p, q) => p - q);
+      // Even-odd spans, the same rule a path fill uses; a cell counts when its centre is inside.
+      for (let k = 0; k + 1 < crossings.length; k += 2) {
+        const x0 = Math.max(0, Math.ceil(crossings[k]! - 0.5));
+        const x1 = Math.min(width - 1, Math.ceil(crossings[k + 1]! - 0.5) - 1);
+        for (let x = x0; x <= x1; x++) {
+          inside++;
+          const gv = grid[y * width + x]!;
+          if (gv !== 127 && gv !== 128) spill++;
+        }
+      }
+    }
+    if (inside >= FLOOR_PLAN_MIN_JUDGED_CELLS && spill > inside * maxSpill) { fits = false; break; }
+  }
+  if (maxSpill === FLOOR_PLAN_MAX_SPILL) fitCache.set(zones, fits);
+  return fits;
 }
 
 /** The floor-plan outer wall's width in cells as a thumbnail draws it (2.8 px at 4 px per cell). */

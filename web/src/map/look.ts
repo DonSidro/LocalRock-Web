@@ -1,4 +1,4 @@
-import { FloorMaterial, erasedCells, erasedRoomIds, roomIdAtCell, type FloorPlanPoint, type FloorPlanZone, type ParsedMap } from '../../../shared/map.js';
+import { FloorMaterial, erasedCells, floorPlanFitsGrid, erasedRoomIds, roomIdAtCell, type FloorPlanPoint, type FloorPlanZone, type ParsedMap } from '../../../shared/map.js';
 
 /*
  * The map's look, ported from LocalRock's RoomColors.kt, FloorTexture.kt, MapBorders.kt,
@@ -427,11 +427,14 @@ export function buildFloorPlan(zones: FloorPlanZone[], height: number): FloorPla
   });
 }
 
-/** The room polygons for the floor-plan look; empty when the map has none. */
+/** The room polygons for the floor-plan look; empty when the map has none or they do not fit its floor. */
 export function floorPlanShapes(map: ParsedMap): FloorPlanShape[] {
   if (!map.originalGrid || map.zoneLines.length === 0) return [];
   const gone = erasedRoomIds(map);
-  return buildFloorPlan(map.zoneLines.filter((z) => !gone.has(z.segment)), map.height);
+  const zones = map.zoneLines.filter((z) => !gone.has(z.segment));
+  // Outlines that flood far past the scanned floor are ignored, so the cells are drawn (app #153).
+  if (!floorPlanFitsGrid(map.zoneLines, map.grid, map.width, map.height)) return [];
+  return buildFloorPlan(zones, map.height);
 }
 
 function mergeCollinear(edges: Array<FloorPlanRun | null>): FloorPlanRun[] {
