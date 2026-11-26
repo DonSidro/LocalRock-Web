@@ -1,6 +1,6 @@
 # Builds the image and publishes it to GitHub's container registry:
 #   ghcr.io/donsidro/localrock-web:latest     every push to master
-#   ghcr.io/donsidro/localrock-web:1.5.0      a v1.5.0 tag (also 1.5)
+#   ghcr.io/donsidro/localrock-web:1.0.0      a v1.0.0 tag (also 1.0)
 # Pull requests are built to check them, but not published.
 name: Docker image
 

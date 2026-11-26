@@ -11,7 +11,7 @@ desktop browser and on a phone.
 
 ## Requirements
 
-- Node.js 20 or newer
+- Node.js 20 or newer, or Docker (see [Run with Docker](#run-with-docker))
 - A running local_roborock_server with your vacuums imported (the same setup the app uses)
 - The email and login code from your server setup
 
@@ -35,8 +35,8 @@ Everything the app does, laid out for a desktop browser:
 - A sidebar with every robot and its live state; a home page with a card per robot (map preview,
   battery, Clean and Dock buttons) and a real reachability check (each robot is asked directly)
 - Each robot has a workspace: name, state and the main controls on top, then tabs for Overview,
-  Edit map, Schedule, History, Maintenance, Settings, Camera (on supported robots) and Remote. Every tab has its own
-  address, so it can be bookmarked or opened in a new browser tab
+  Edit map, Schedule, History, Maintenance, Settings, Camera (on supported robots) and Remote. Every
+  tab has its own address, so it can be bookmarked or opened in a new browser tab
 - Overview: the map beside an inspector column (status, rooms, cleaning mode, dock). The map has
   three tools: pick rooms, draw zones, set a Pin & Go target. Scroll to zoom, drag to pan,
   right-drag to pan while drawing, double-click to fit; floor picker for multi-level homes
@@ -154,26 +154,33 @@ either point `LOCALROCK_CA_FILE` at the CA certificate (preferred), or turn on "
 certificates" on the server address screen. The latter turns off certificate checking for the
 server's HTTPS and MQTT.
 
-## Run with Docker Compose
+## Run with Docker
 
 Run it on a computer on the same network as your local_roborock_server (a home server, NAS or
 Raspberry Pi works). A ready-made image is published for amd64, arm64 and arm/v7, so nothing needs
 building. Either run it directly:
 
 ```bash
-docker run -d --name localrock-web --restart unless-stopped   -p 8080:8080   -e LOCALROCK_PASSWORD=choose-a-long-password   -v localrock-data:/app/data   ghcr.io/donsidro/localrock-web:latest
+docker run -d --name localrock-web --restart unless-stopped \
+  -p 8080:8080 \
+  -e LOCALROCK_PASSWORD=choose-a-long-password \
+  -v localrock-data:/app/data \
+  ghcr.io/donsidro/localrock-web:latest
 ```
 
-or with Compose, using just `docker-compose.yml` and a `.env` file from this repository:
+or with Compose, which needs only two files from this repository:
 
 ```bash
-cp .env.example .env      # then edit .env and choose a long LOCALROCK_PASSWORD
+mkdir localrock-web && cd localrock-web
+curl -fsSLO https://raw.githubusercontent.com/DonSidro/LocalRock-Web/master/docker-compose.yml
+curl -fsSL https://raw.githubusercontent.com/DonSidro/LocalRock-Web/master/.env.example -o .env
+# edit .env and choose a long LOCALROCK_PASSWORD, then:
 docker compose up -d
 ```
 
-Images are tagged `latest` (the newest master), a version such as `1.5.0` for each release, and
-the commit. To build from a checkout instead, swap `image:` for `build: .` in the compose file and
-run `docker compose up -d --build`.
+Images are tagged `latest` (the newest master), the short commit (`sha-...`), and a version such as
+`1.0.0` once a matching `v1.0.0` tag is pushed. To build from a checkout instead, swap `image:` for
+`build: .` in the compose file and run `docker compose up -d --build`.
 
 Open `http://<that computer's address>:8080` and enter the password. In a container the page
 listens on all interfaces, so the password is required; compose refuses to start without it.
@@ -182,7 +189,8 @@ listens on all interfaces, so the password is required; compose refuses to start
   rebuilds and updates.
 - Set `LOCALROCK_PORT` in `.env` to publish another port.
 - To trust your own CA, put `ca.pem` next to `docker-compose.yml` and uncomment the two
-  `LOCALROCK_CA_FILE` lines in it.
+  `LOCALROCK_CA_FILE` lines in it (with `docker run`: add `-v ./ca.pem:/certs/ca.pem:ro` and
+  `-e LOCALROCK_CA_FILE=/certs/ca.pem`).
 - Update with `docker compose pull && docker compose up -d` (with `docker run`: pull the image,
   then remove and start the container again; the volume keeps your settings).
 - **Add vacuum** sends its Wi-Fi packets from the container. It needs the Docker host itself to
@@ -192,8 +200,11 @@ listens on all interfaces, so the password is required; compose refuses to start
 ## Try it without a robot
 
 The simulator is a stand-in local_roborock_server with an MQTT broker and two simulated vacuums
-(one with the classic map format, one with the newer B01 format). It answers every command,
-runs a pretend clean, and applies map edits to a real map so the read-back checks work.
+(one with the classic map format, one with the newer B01 format), plus a third that was never
+paired. It answers every command, runs a pretend clean, and applies map edits to a real map so the
+read-back checks work. The classic-format robot also has furniture on its map. Set
+`SIM_S8_MODEL=roborock.vacuum.a27` to make it pose as an S7 MaxV, so the Camera tab shows (turn on
+Experimental video in Settings); the camera itself answers with a disabled-PIN error.
 
 ```bash
 npm run sim

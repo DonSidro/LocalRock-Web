@@ -118,7 +118,7 @@ export function AppSettingsScreen() {
         )}
 
         <Panel title="About">
-          <p><span className="strong">LocalRock Web</span> <span className="muted">0.1.0</span></p>
+          <p><span className="strong">LocalRock Web</span> <span className="muted">{__APP_VERSION__}</span></p>
           <p className="muted small">
             A web version of LocalRock for robot vacuums on a self-hosted local_roborock_server. Not affiliated with
             or endorsed by Roborock. Settings and the server session are stored in the server's data folder.
