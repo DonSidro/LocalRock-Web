@@ -35,7 +35,7 @@ Everything the app does, laid out for a desktop browser:
 - A sidebar with every robot and its live state; a home page with a card per robot (map preview,
   battery, Clean and Dock buttons) and a real reachability check (each robot is asked directly)
 - Each robot has a workspace: name, state and the main controls on top, then tabs for Overview,
-  Edit map, Schedule, History, Maintenance, Settings, Camera and Remote. Every tab has its own
+  Edit map, Schedule, History, Maintenance, Settings, Camera (on supported robots) and Remote. Every tab has its own
   address, so it can be bookmarked or opened in a new browser tab
 - Overview: the map beside an inspector column (status, rooms, cleaning mode, dock). The map has
   three tools: pick rooms, draw zones, set a Pin & Go target. Scroll to zoom, drag to pan,
@@ -45,7 +45,8 @@ Everything the app does, laid out for a desktop browser:
   left out, the route with the ground it covered, room names on pills with a room-type badge. Turn it
   in quarter turns, or show it as a 3D model (right-drag or Ctrl+drag, two fingers on touch, to turn
   and tilt); both are remembered per robot in the browser. Robots show the name their model is sold
-  under
+  under. Where a robot's room outlines are plain boxes that spill past its walls (seen on a Qrevo
+  Curv 2 Flow), the map is drawn from its cells instead
 - Keyboard shortcuts: C clean / pause / resume, D dock, R refresh the map, 1-3 map tools, Esc to
   clear, Delete to remove a shape in the editor, ? for the list
 - Clean, clean picked rooms in the order picked, pause, resume, stop, return to dock
@@ -60,7 +61,15 @@ Everything the app does, laid out for a desktop browser:
 - Map editor: no-go zones, virtual walls, carpets (rectangular and round), thresholds; move,
   resize, rotate, delete; rooms: rename, floor type, split, merge. Every edit is only reported
   done once the robot's own map shows it, exactly like the app.
-- Camera live view (WebRTC in the browser), with PIN or pattern
+- Furniture on the map (all 21 S7 MaxV kinds), and a furniture editor on robots that report support
+  for it: add from a catalog, move, rotate, resize and delete, saved only once the robot's map
+  confirms every change and leaves every other record untouched
+- Camera live view (WebRTC in the browser, behind the Experimental video setting) on models with
+  official remote viewing: the S7 MaxV is tested; other known models need an opt-in each visit.
+  The existing PIN or pattern is checked first and kept in memory only. Two-way audio calls with
+  this browser's microphone, full screen with fill or fit, reconnect in SD and connection tests.
+  On the S7 MaxV the viewer also drives (hold a direction), does Pin-and-Go on an inset map, pauses
+  and resumes a clean, stops movement and sends the robot home
 - Robot alerts (errors, finished cleans, dock problems) as in-page messages and, if you allow it,
   browser notifications
 - Add vacuum (Wi-Fi pairing through the server's admin API)
@@ -100,7 +109,8 @@ them LocalRock Web still works; it leaves that part out.
   they are only shown in an open tab (there is no push service).
 - **Zone clean and Pin & Go** send robot millimetres. In the app (1.3.0) these two screens send
   map pixel numbers instead, which do not match the robot's coordinates.
-- **Camera** has its own tab (the app currently hides it).
+- **Camera** has its own tab instead of the map page's video icon. Voice calls work in any browser
+  that allows the microphone (a secure page: HTTPS, or localhost); in the app they are iPhone only.
 - **Layout**: a sidebar, tabs, drop-downs, tables and windows instead of the app's bottom
   sheets and drill-down screens. Narrow windows and phones get a drawer for the sidebar and the
   panels under the map.
@@ -221,9 +231,9 @@ scripts/           end-to-end checks
 
 ## Security notes
 
-- The server stores the session, the login code (for silent re-login), the admin password and
-  camera PINs in `data/settings.json`, like the app keeps them in its preferences. Protect that
-  folder.
+- The server stores the session, the login code (for silent re-login) and the admin password in
+  `data/settings.json`, like the app keeps them in its preferences. Protect that folder. Camera PINs
+  are no longer stored (older versions kept them there; they are removed on start).
 - By default the page is only reachable from this computer. State-changing requests must be JSON
   from the same origin, the WebSocket checks its origin, and unknown host names are refused, so
   other web sites open in your browser can't drive the robot.
